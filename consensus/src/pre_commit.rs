@@ -69,6 +69,11 @@ impl Core {
             warn!("Received PreCommit with invalid QC type: {:?}", prepare_qc.qc_type);
             return Ok(());
         }
+        if !self.check_node(&prepare_qc.node) {
+            warn!("Received precommit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
+                  view, prepare_qc.node.digest(), self.voted_node.digest());
+            return Ok(());
+        }
         prepare_qc.verify(&self.committee)?;
         self.prepare_qc = prepare_qc.clone();
         self.send_pre_commit_vote(prepare_qc.node).await?;

@@ -69,6 +69,11 @@ impl Core {
             warn!("Received Commit with invalid QC type: {:?}", pre_commit_qc.qc_type);
             return Ok(());
         }
+        if !self.check_node(&pre_commit_qc.node) {
+            warn!("Received commit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
+                  view, pre_commit_qc.node.digest(), self.voted_node.digest());
+            return Ok(());
+        }
         pre_commit_qc.verify(&self.committee)?;
         self.lock_qc_and_blob(pre_commit_qc.clone());
 

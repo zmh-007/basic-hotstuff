@@ -77,6 +77,7 @@ impl Core {
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
         self.aggregator.cleanup();
         self.unlock_blob();
+        self.view.height += 1;
         self.start_new_round(0).await;
         Ok(())
     }

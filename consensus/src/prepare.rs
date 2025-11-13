@@ -48,6 +48,7 @@ impl Core {
                     .collect();
                 self.network.broadcast(addresses, Bytes::from(payload)).await;
                 debug!("Prepare message broadcast successfully");
+                self.voted_node = node.clone();
                 self.handle_prepare(self.name, self.view.clone(), node, high_qc).await?;
             }
             Err(e) => {
@@ -73,6 +74,11 @@ impl Core {
         if high_qc != QuorumCert::default() {
             high_qc.verify(&self.committee)?;
         }
+        if !self.check_node(&node) {
+            warn!("Received prepare for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
+                  view, node.digest(), self.voted_node.digest());
+            return Ok(());
+        }
 
         // TODO: verify proposal from replica
 
@@ -80,7 +86,8 @@ impl Core {
         // safety and liveness rules
         self.extend(&node, &high_qc)?;
         self.safe_node(&node, &high_qc)?;
-        
+        self.voted_node = node.clone();
+
         self.send_prepare_vote(node).await?;
         Ok(())
     }

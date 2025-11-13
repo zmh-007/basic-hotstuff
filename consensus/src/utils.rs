@@ -1,6 +1,6 @@
 use crypto::{Digest, PublicKey, Signature};
 
-use crate::{ConsensusError, consensus::View, core::Core, error::ConsensusResult};
+use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
 
 impl Core {
     pub fn check_is_leader(&self, view: &View) -> bool {
@@ -11,6 +11,10 @@ impl Core {
     pub fn check_from_leader(&self, view: &View, author: PublicKey) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == author
+    }
+
+    pub fn check_node(&self, node: &Node) -> bool {
+        self.voted_node == Node::default() || self.voted_node.digest() == node.digest()
     }
 }
 

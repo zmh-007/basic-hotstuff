@@ -60,16 +60,6 @@ impl ConsensusMessageType {
             ConsensusMessageType::NewView => Fr::from(4u64),
         }
     }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            ConsensusMessageType::NewView => "NewView",
-            ConsensusMessageType::Prepare => "Prepare",
-            ConsensusMessageType::PreCommit => "PreCommit",
-            ConsensusMessageType::Commit => "Commit",
-            ConsensusMessageType::Decide => "Decide",
-        }
-    }
 }
 
 /// MessagePayload represents the different types of message content

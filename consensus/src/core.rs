@@ -3,7 +3,7 @@ use crate::error::ConsensusResult;
 use crate::timer::Timer;
 use crate::{LeaderElector, Parameters};
 use crate::config::Committee;
-use crate::consensus::{ConsensusMessage, MessagePayload, QuorumCert, View};
+use crate::consensus::{ConsensusMessage, MessagePayload, Node, QuorumCert, View};
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{error, warn, info};
 use async_recursion::async_recursion;
@@ -27,6 +27,7 @@ pub struct Core {
 
     // state variables
     pub view: View,
+    pub voted_node: Node,
     pub prepare_qc: QuorumCert,
     pub lock_qc: QuorumCert,
     pub lock_blob: Digest,
@@ -59,6 +60,7 @@ impl Core {
                 aggregator: Aggregator::new(committee),
 
                 view: View::default(),
+                voted_node: Node::default(),
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
                 lock_blob: Digest::default(),
@@ -138,6 +140,7 @@ impl Core {
     #[async_recursion]
     pub async fn start_new_round(&mut self, round: u64) {
         self.view.round = round;
+        self.voted_node = Node::default();
         self.timer.reset();
         info!("Starting new view {:?}", self.view);
         
