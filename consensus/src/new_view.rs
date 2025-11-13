@@ -1,9 +1,9 @@
-use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, QuorumCert};
+use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, QuorumCert, View};
 use crate::core::Core;
 use crate::error::ConsensusResult;
 use bytes::Bytes;
 use crypto::{PublicKey};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use crate::{ConsensusError};
 
 impl Core {
@@ -17,7 +17,7 @@ impl Core {
         let new_view_message = ConsensusMessage::new(
             ConsensusMessageType::NewView,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::NewView(prepare_qc.clone()),
             self.signature_service.clone(),
         ).await;
@@ -26,9 +26,9 @@ impl Core {
         match bincode::serialize(&new_view_message) {
             Ok(payload) => {
                 // send the message
-                let leader = self.leader_elector.get_leader(self.view);
+                let leader = self.leader_elector.get_leader(&self.view);
                 if leader == self.name {
-                    self.handle_new_view(self.name, self.view, prepare_qc.clone()).await?;
+                    self.handle_new_view(self.name, self.view.clone(), prepare_qc.clone()).await?;
                 } else {
                     debug!("Sending {:?} to {}", new_view_message, leader);
                     let address = self
@@ -46,12 +46,13 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_new_view(&mut self, author: PublicKey, view: u64, prepare_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Received NewView for view {:?}", view);
-        if view < self.view {
+    pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+        info!("Received NewView for view {:?}", view);
+        if view != self.view {
+            warn!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_is_leader(view) {
+        if !self.check_is_leader(&view) {
             warn!("Received NewView for view {:?}, but {:?} not the leader", view, self.name);
             return Ok(());
         }
@@ -64,7 +65,7 @@ impl Core {
         }
         
         // Try to add the new view to aggregator
-        if let Some(high_qc) = self.aggregator.add_new_view(author, view, prepare_qc)? {
+        if let Some(high_qc) = self.aggregator.add_new_view(author, view.clone(), prepare_qc)? {
             // Threshold reached, we have enough NewView messages
             debug!("NewView threshold reached for view {:?}, got high QC with view {:?}", 
                    view, high_qc.view);

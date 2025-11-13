@@ -1,22 +1,23 @@
 use bytes::Bytes;
-use crypto::{PublicKey, Signature};
-use log::{debug, warn};
+use crypto::{Digest, PublicKey, Signature};
+use log::{debug, info, warn};
 use tokio::time;
-use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node}, core::Core, error::ConsensusResult};
+use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node, View}, core::Core, error::ConsensusResult};
 
 
 impl Core {
-    pub async fn handle_commit_vote(&mut self, author: PublicKey, view: u64, signature: Signature, node: Node) -> ConsensusResult<()> {
-        debug!("Received commit vote for view {:?}", view);
-        if view < self.view {
+    pub async fn handle_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<()> {
+        info!("Received commit vote for view {:?}", view);
+        if view != self.view {
+            warn!("Received commit vote for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_is_leader(view) {
+        if !self.check_is_leader(&view) {
             warn!("Received commit vote for view {:?}, but self {:?} not the leader", view, self.name);
             return Ok(());
         }
 
-        if let Some(commit_qc) = self.aggregator.add_commit_vote(author, view, signature, node)? {
+        if let Some(commit_qc) = self.aggregator.add_commit_vote(author, view.clone(), signature, node)? {
             debug!("Formed Commit QC for view {:?}", view);
             self.send_decide(commit_qc).await?;
         }
@@ -28,7 +29,7 @@ impl Core {
         let decide_message = ConsensusMessage::new(
             ConsensusMessageType::Decide,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::Decide(commit_qc.clone()),
             self.signature_service.clone(),
         ).await;
@@ -45,7 +46,7 @@ impl Core {
                       .collect();
                  self.network.broadcast(addresses, Bytes::from(payload)).await;
                  debug!("Decide message broadcast successfully");
-                 self.handle_decide(self.name, self.view, commit_qc.clone()).await?;
+                 self.handle_decide(self.name, self.view.clone(), commit_qc.clone()).await?;
                 }
                 Err(e) => {
                  return Err(ConsensusError::SerializationError(e));
@@ -54,12 +55,13 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_decide(&mut self, author: PublicKey, view: u64, commit_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Received Decide for view {:?}", view);
-        if view < self.view {
+    pub async fn handle_decide(&mut self, author: PublicKey, view: View, commit_qc: QuorumCert) -> ConsensusResult<()> {
+        info!("Received Decide for view {:?}", view);
+        if view != self.view {
+            warn!("Received decide for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_from_leader(view, author) {
+        if !self.check_from_leader(&view, author) {
             warn!("Received decide for view {:?} from {:?}, but not from leader", view, author);
             return Ok(());
         }
@@ -73,7 +75,13 @@ impl Core {
         }
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
-        self.start_new_view().await;
+        self.aggregator.cleanup();
+        self.unlock_blob();
+        self.start_new_round(0).await;
         Ok(())
+    }
+
+    fn unlock_blob(&mut self) {
+        self.lock_blob = Digest::default();
     }
 }

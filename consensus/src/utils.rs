@@ -1,14 +1,14 @@
 use crypto::{Digest, PublicKey, Signature};
 
-use crate::{ConsensusError, core::Core, error::ConsensusResult};
+use crate::{ConsensusError, consensus::View, core::Core, error::ConsensusResult};
 
 impl Core {
-    pub fn check_is_leader(&self, view: u64) -> bool {
+    pub fn check_is_leader(&self, view: &View) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == self.name
     }
 
-    pub fn check_from_leader(&self, view: u64, author: PublicKey) -> bool {
+    pub fn check_from_leader(&self, view: &View, author: PublicKey) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == author
     }

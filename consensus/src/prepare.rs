@@ -1,4 +1,4 @@
-use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Node, QuorumCert};
+use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Node, QuorumCert, View};
 use crate::core::Core;
 use crate::error::ConsensusResult;
 use bytes::Bytes;
@@ -10,14 +10,19 @@ impl Core {
     /// Send Prepare message with current PrepareQC
     pub async fn send_prepare(&mut self, high_qc: QuorumCert) -> ConsensusResult<()> {
         debug!("Sending Prepare message");
-        if !self.check_is_leader(self.view) {
+        if !self.check_is_leader(&self.view) {
             warn!("Not the leader for view {:?}, cannot send Prepare message", self.view);
             return Ok(());
         }
         
-        // TODO: get proposal from replica
-        let blob = Digest::default();
-        
+        // check if blob is locked, else get proposal from replica
+        let blob = if self.lock_blob != Digest::default() {
+            self.lock_blob.clone()
+        } else {
+            // TODO: get proposal from replica
+            Digest::default()
+        };
+
         let parent = high_qc.node.clone();
         let node = Node::new(parent, blob);
 
@@ -25,7 +30,7 @@ impl Core {
         let prepare_message = ConsensusMessage::new(
             ConsensusMessageType::Prepare,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::Prepare(node.clone(), high_qc.clone()),
             self.signature_service.clone(),
         ).await;
@@ -43,7 +48,7 @@ impl Core {
                     .collect();
                 self.network.broadcast(addresses, Bytes::from(payload)).await;
                 debug!("Prepare message broadcast successfully");
-                self.handle_prepare(self.name, self.view, node, high_qc).await?;
+                self.handle_prepare(self.name, self.view.clone(), node, high_qc).await?;
             }
             Err(e) => {
                 return Err(ConsensusError::SerializationError(e));
@@ -52,12 +57,12 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_prepare(&mut self, author: PublicKey, view: u64, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_prepare(&mut self, author: PublicKey, view: View, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
         debug!("Received prepare for view {:?}", view);
-        if view < self.view {
+        if view != self.view {
             return Ok(());
         }
-        if !self.check_from_leader(view, author) {
+        if !self.check_from_leader(&view, author) {
             warn!("Received prepare for view {:?}, but {:?} not the leader", view, author);
             return Ok(());
         }
@@ -70,6 +75,7 @@ impl Core {
         }
 
         // TODO: verify proposal from replica
+
 
         // safety and liveness rules
         self.extend(&node, &high_qc)?;
@@ -110,7 +116,11 @@ impl Core {
         // Check safety conditions:
         // 1. highQC.view > lockQC.view OR
         // 2. node extends lockQC (node's parent equals lockQC's node)
-        if high_qc.view > lock_qc.view {
+        // TODO::
+        if high_qc.view.height > lock_qc.view.height {
+            return Ok(());
+        }
+        if high_qc.view.round > lock_qc.view.round {
             return Ok(());
         }
         
@@ -133,7 +143,7 @@ impl Core {
         let prepare_vote_message = ConsensusMessage::new(
             ConsensusMessageType::Prepare,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::PrepareVote(node),
             self.signature_service.clone(),
         ).await;
@@ -142,7 +152,7 @@ impl Core {
         match bincode::serialize(&prepare_vote_message) {
             Ok(payload) => {
                 // send the message to leader
-                let leader = self.leader_elector.get_leader(self.view);
+                let leader = self.leader_elector.get_leader(&self.view);
                 debug!("Sending PrepareVote to leader {:?}", leader);
                 let address = self
                     .committee

@@ -15,25 +15,29 @@ use crate::utils::verify_signature;
 /// The default channel capacity for each channel of the consensus.
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
-pub type View = u64;
-
-pub trait ToField {
-    fn to_field(&self) -> Fr;
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct View {
+    pub height: u64,
+    pub round: u64,
 }
 
-impl ToField for u64 {
-    fn to_field(&self) -> Fr {
-        Fr::from(*self)
+impl View {
+    pub fn default() -> Self {
+        Self { height: 1, round: 0 }
+    }
+
+    pub fn digest(&self) -> Fr {
+        let elements = vec![
+            Fr::from(self.height),
+            Fr::from(self.round),
+        ];
+        elements.hash()
     }
 }
 
-impl ToField for Digest {
-    fn to_field(&self) -> Fr {
-        // Convert the first 8 bytes of the digest to u64, then to Fr
-        let bytes = &self.0[..8.min(self.0.len())];
-        let mut arr = [0u8; 8];
-        arr[..bytes.len()].copy_from_slice(bytes);
-        Fr::from(u64::from_le_bytes(arr))
+impl std::fmt::Display for View {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "View {{ height: {}, round: {} }}", self.height, self.round)
     }
 }
 
@@ -46,7 +50,7 @@ pub enum ConsensusMessageType {
     NewView,
 }
 
-impl ToField for ConsensusMessageType {
+impl ConsensusMessageType {
     fn to_field(&self) -> Fr {
         match self {
             ConsensusMessageType::Prepare => Fr::from(0u64),
@@ -56,9 +60,7 @@ impl ToField for ConsensusMessageType {
             ConsensusMessageType::NewView => Fr::from(4u64),
         }
     }
-}
 
-impl ConsensusMessageType {
     fn as_str(&self) -> &'static str {
         match self {
             ConsensusMessageType::NewView => "NewView",
@@ -119,7 +121,7 @@ impl ConsensusMessage {
     pub fn digest(&self) -> Digest {
         let elements = vec![
             self.msg_type.to_field(),
-            self.view.to_field(),
+            self.view.digest(),
             self.msg.digest().to_field(),
         ];
         let b: Vec<u8> = elements.hash().enc().collect();
@@ -225,7 +227,7 @@ impl QuorumCert {
     fn digest(&self) -> Digest {
         let elements = vec![
             self.qc_type.to_field(),
-            self.view.to_field(),
+            self.view.digest(),
             self.node.digest().to_field(),
         ];
         let b: Vec<u8> = elements.hash().enc().collect();

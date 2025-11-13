@@ -40,7 +40,7 @@ impl Aggregator {
         // with different round numbers or different digests.
 
         self.prepare_aggregators
-            .entry(view)
+            .entry(view.clone())
             .or_insert_with(HashMap::new)
             .entry(node.digest())
             .or_insert_with(|| Box::new(QCMaker::new()))
@@ -52,7 +52,7 @@ impl Aggregator {
         // with different round numbers or different digests.
 
         self.pre_commit_aggregators
-            .entry(view)
+            .entry(view.clone())
             .or_insert_with(HashMap::new)
             .entry(node.digest())
             .or_insert_with(|| Box::new(QCMaker::new()))
@@ -64,18 +64,18 @@ impl Aggregator {
         // with different round numbers or different digests.
 
         self.commit_aggregators
-            .entry(view)
+            .entry(view.clone())
             .or_insert_with(HashMap::new)
             .entry(node.digest())
             .or_insert_with(|| Box::new(QCMaker::new()))
             .append(author, view, signature, &self.committee, node, ConsensusMessageType::Commit)
     }
 
-    pub fn cleanup(&mut self, view: View) {
-        self.new_view_aggregators.retain(|k, _| *k >= view);
-        self.prepare_aggregators.retain(|k, _| *k >= view);
-        self.pre_commit_aggregators.retain(|k, _| *k >= view);
-        self.commit_aggregators.retain(|k, _| *k >= view);
+    pub fn cleanup(&mut self) {
+        self.new_view_aggregators.clear();
+        self.prepare_aggregators.clear();
+        self.pre_commit_aggregators.clear();
+        self.commit_aggregators.clear();
     }
 }
 
@@ -151,11 +151,11 @@ impl NVMaker {
         if self.weight >= committee.quorum_threshold() {
             self.weight = 0;
             
-            // Find the QC with the highest view
+            // Find the QC with the highest view (first by height, then by round)
             let highest_qc = self.votes
                 .iter()
                 .map(|(_, qc)| qc)
-                .max_by_key(|qc| qc.view)
+                .max_by_key(|qc| (qc.view.height, qc.view.round))
                 .unwrap()
                 .clone();
             

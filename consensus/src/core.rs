@@ -3,7 +3,7 @@ use crate::error::ConsensusResult;
 use crate::timer::Timer;
 use crate::{LeaderElector, Parameters};
 use crate::config::Committee;
-use crate::consensus::{ConsensusMessage, QuorumCert, MessagePayload};
+use crate::consensus::{ConsensusMessage, MessagePayload, QuorumCert, View};
 use crypto::{Digest, PublicKey, SignatureService};
 use log::{error, warn, info};
 use async_recursion::async_recursion;
@@ -26,9 +26,10 @@ pub struct Core {
     pub aggregator: Aggregator,
 
     // state variables
-    pub view: u64,
+    pub view: View,
     pub prepare_qc: QuorumCert,
     pub lock_qc: QuorumCert,
+    pub lock_blob: Digest,
 }
 
 impl Core {
@@ -43,9 +44,7 @@ impl Core {
         rx_message: Receiver<ConsensusMessage>,
         tx_commit: Sender<Digest>,
     ) {
-        tokio::spawn(async move {
-            let initial_view = 0;
-            
+        tokio::spawn(async move {     
             let mut core = Self {
                 name,
                 committee: committee.clone(),
@@ -59,9 +58,10 @@ impl Core {
                 network: SimpleSender::new(),
                 aggregator: Aggregator::new(committee),
 
-                view: initial_view,
+                view: View::default(),
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
+                lock_blob: Digest::default(),
             };
             
             core.run().await;
@@ -72,7 +72,7 @@ impl Core {
         info!("HotStuff consensus core started for node {}", self.name);
         
         // Start the timer for the first round
-        self.start_new_view().await;
+        self.start_new_round(0).await;
 
         // Main consensus loop
         loop {
@@ -136,9 +136,8 @@ impl Core {
     }
 
     #[async_recursion]
-    pub async fn start_new_view(&mut self) {
-        self.aggregator.cleanup(self.view);
-        self.view += 1;
+    pub async fn start_new_round(&mut self, round: u64) {
+        self.view.round = round;
         self.timer.reset();
         info!("Starting new view {:?}", self.view);
         
@@ -150,7 +149,7 @@ impl Core {
 
     async fn local_timeout_round(&mut self) -> ConsensusResult<()> {
         warn!("Timeout occurred for view {:?}", self.view);
-        self.start_new_view().await;
+        self.start_new_round(self.view.round + 1).await;
         Ok(())
     }
 }

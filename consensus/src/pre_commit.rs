@@ -1,21 +1,22 @@
 use bytes::Bytes;
 use crypto::{PublicKey, Signature};
-use log::{debug, warn};
-use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node}, core::Core, error::ConsensusResult};
+use log::{debug, info, warn};
+use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node, View}, core::Core, error::ConsensusResult};
 
 
 impl Core {
-    pub async fn handle_prepare_vote(&mut self, author: PublicKey, view: u64, signature: Signature, node: Node) -> ConsensusResult<()> {
-        debug!("Received prepare vote for view {:?}", view);
-        if view < self.view {
+    pub async fn handle_prepare_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<()> {
+        info!("Received prepare vote for view {:?}", view);
+        if view != self.view {
+            warn!("Received prepare vote for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_is_leader(view) {
+        if !self.check_is_leader(&view) {
             warn!("Received prepare vote for view {:?}, but self {:?} not the leader", view, self.name);
             return Ok(());
         }
 
-        if let Some(prepare_qc) = self.aggregator.add_prepare_vote(author, view, signature, node)? {
+        if let Some(prepare_qc) = self.aggregator.add_prepare_vote(author, view.clone(), signature, node)? {
             debug!("Formed Prepare QC for view {:?}", view);
             self.prepare_qc = prepare_qc.clone();
             self.send_pre_commit(prepare_qc).await?;
@@ -28,7 +29,7 @@ impl Core {
         let prepare_message = ConsensusMessage::new(
             ConsensusMessageType::PreCommit,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::PreCommit(prepare_qc.clone()),
             self.signature_service.clone(),
         ).await;
@@ -45,7 +46,7 @@ impl Core {
                       .collect();
                  self.network.broadcast(addresses, Bytes::from(payload)).await;
                  debug!("PreCommit message broadcast successfully");
-                 self.handle_pre_commit(self.name, self.view, prepare_qc).await?;
+                 self.handle_pre_commit(self.name, self.view.clone(), prepare_qc).await?;
                 }
                 Err(e) => {
                  return Err(ConsensusError::SerializationError(e));
@@ -54,12 +55,13 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_pre_commit(&mut self, author: PublicKey, view: u64, prepare_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Received PreCommit for view {:?}", view);
-        if view < self.view {
+    pub async fn handle_pre_commit(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+        info!("Received PreCommit for view {:?}", view);
+        if view != self.view {
+            warn!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_from_leader(view, author) {
+        if !self.check_from_leader(&view, author) {
             warn!("Received PreCommit for view {:?}, but author {:?} is not the leader", view, author);
             return Ok(());
         }
@@ -79,7 +81,7 @@ impl Core {
         let pre_commit_vote_message = ConsensusMessage::new(
             ConsensusMessageType::PreCommit,
             self.name,
-            self.view, 
+            self.view.clone(), 
             MessagePayload::PreCommitVote(node.clone()),
             self.signature_service.clone(),
         ).await;
@@ -88,7 +90,7 @@ impl Core {
                 Ok(payload) => {
                     // send the message to leader
                     debug!("send precommit vote to leader: {:?}", pre_commit_vote_message);
-                    let leader = self.leader_elector.get_leader(self.view);
+                    let leader = self.leader_elector.get_leader(&self.view);
                     let address = self
                         .committee
                         .address(&leader)
