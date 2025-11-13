@@ -19,7 +19,7 @@ pub struct Core {
     store: Store,
     pub signature_service: SignatureService,
     pub leader_elector: LeaderElector,
-    rx_message: Receiver<ConsensusMessage>,
+    pub rx_message: Receiver<ConsensusMessage>,
     pub tx_commit: Sender<Digest>,
     pub timer: Timer,
     pub network: SimpleSender,

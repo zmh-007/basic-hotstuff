@@ -48,7 +48,6 @@ impl Core {
                     .collect();
                 self.network.broadcast(addresses, Bytes::from(payload)).await;
                 debug!("Prepare message broadcast successfully");
-                self.voted_node = node.clone();
                 self.handle_prepare(self.name, self.view.clone(), node, high_qc).await?;
             }
             Err(e) => {
@@ -74,8 +73,8 @@ impl Core {
         if high_qc != QuorumCert::default() {
             high_qc.verify(&self.committee)?;
         }
-        if !self.check_node(&node) {
-            warn!("Received prepare for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
+        if self.voted_node != Node::default() {
+            warn!("Received prepare for view {:?}, but node digest {:?} is voted already to digest {:?}", 
                   view, node.digest(), self.voted_node.digest());
             return Ok(());
         }

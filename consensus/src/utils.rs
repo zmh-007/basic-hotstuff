@@ -14,7 +14,7 @@ impl Core {
     }
 
     pub fn check_node(&self, node: &Node) -> bool {
-        self.voted_node == Node::default() || self.voted_node.digest() == node.digest()
+        self.voted_node != Node::default() && self.voted_node.digest() == node.digest()
     }
 }
 

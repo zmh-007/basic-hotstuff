@@ -57,10 +57,7 @@ impl Core {
 
     pub async fn handle_decide(&mut self, author: PublicKey, view: View, commit_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received Decide for view {:?}", view);
-        if view != self.view {
-            warn!("Received decide for view {:?}, but current view is {:?}", view, self.view);
-            return Ok(());
-        }
+
         if !self.check_from_leader(&view, author) {
             warn!("Received decide for view {:?} from {:?}, but not from leader", view, author);
             return Ok(());
@@ -77,7 +74,7 @@ impl Core {
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
         self.aggregator.cleanup();
         self.unlock_blob();
-        self.view.height += 1;
+        self.view.height = commit_qc.view.height + 1;
         self.start_new_round(0).await;
         Ok(())
     }
