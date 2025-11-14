@@ -1,11 +1,11 @@
 use bytes::Bytes;
-use crypto::{PublicKey, Signature};
+use crypto::{Digest, PublicKey, Signature};
 use log::{debug, info, warn};
-use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node, View}, core::Core, error::ConsensusResult};
+use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 
 
 impl Core {
-    pub async fn handle_pre_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<()> {
+    pub async fn handle_pre_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<()> {
         info!("Received pre commit vote for view {:?}", view);
         if view != self.view {
             warn!("Received pre commit vote for view {:?}, but current view is {:?}", view, self.view);
@@ -16,7 +16,7 @@ impl Core {
             return Ok(());
         }
 
-        if let Some(pre_commit_qc) = self.aggregator.add_pre_commit_vote(author, view.clone(), signature, node)? {
+        if let Some(pre_commit_qc) = self.aggregator.add_pre_commit_vote(author, view.clone(), signature, node_digest)? {
             debug!("Formed PreCommit QC for view {:?}", view);
             self.lock_qc_and_blob(pre_commit_qc.clone());
             self.send_commit(pre_commit_qc).await?;
@@ -69,25 +69,25 @@ impl Core {
             warn!("Received Commit with invalid QC type: {:?}", pre_commit_qc.qc_type);
             return Ok(());
         }
-        if !self.check_node(&pre_commit_qc.node) {
+        if !self.check_node(&pre_commit_qc.node_digest) {
             warn!("Received commit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
-                  view, pre_commit_qc.node.digest(), self.voted_node.digest());
+                  view, pre_commit_qc.node_digest, self.voted_node.digest());
             return Ok(());
         }
         pre_commit_qc.verify(&self.committee)?;
         self.lock_qc_and_blob(pre_commit_qc.clone());
 
-        self.send_commit_vote(pre_commit_qc.node.clone()).await?;
+        self.send_commit_vote(pre_commit_qc.node_digest.clone()).await?;
         Ok(())
     }
 
-    pub async fn send_commit_vote(&mut self, node: Node) -> ConsensusResult<()> {
+    pub async fn send_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
         debug!("Sending Commit Vote message");
         let commit_vote_message = ConsensusMessage::new(
             ConsensusMessageType::Commit,
             self.name,
             self.view.clone(), 
-            MessagePayload::CommitVote(node.clone()),
+            MessagePayload::CommitVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
@@ -112,6 +112,6 @@ impl Core {
 
     fn lock_qc_and_blob(&mut self, qc: QuorumCert) {
         self.lock_qc = qc.clone();
-        self.lock_blob = qc.node.blob.clone();
+        self.lock_blob = self.voted_node.blob.clone();
     }
 }

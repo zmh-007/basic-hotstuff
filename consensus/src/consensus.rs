@@ -3,6 +3,8 @@ use crate::ConsensusError;
 use async_trait::async_trait;
 use bytes::Bytes;
 use crypto::{Digest, PublicKey, SignatureService, Signature};
+use hex::decode;
+use l0::Blk;
 use log::{info};
 use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
 use serde::{Deserialize, Serialize};
@@ -67,11 +69,11 @@ impl ConsensusMessageType {
 pub enum MessagePayload {
     NewView(QuorumCert),
     Prepare(Node, QuorumCert),
-    PrepareVote(Node),
+    PrepareVote(Digest),
     PreCommit(QuorumCert),
-    PreCommitVote(Node),
+    PreCommitVote(Digest),
     Commit(QuorumCert),
-    CommitVote(Node),
+    CommitVote(Digest),
     Decide(QuorumCert),
 }
 
@@ -91,9 +93,9 @@ impl MessagePayload {
                 let b: Vec<u8> = elements.hash().enc().collect();
                 Digest(b.try_into().expect("Failed to convert prepare payload hash bytes to digest"))
             },
-            MessagePayload::PrepareVote(node)
-            | MessagePayload::PreCommitVote(node)
-            | MessagePayload::CommitVote(node) => node.digest(),
+            MessagePayload::PrepareVote(node_digest)
+            | MessagePayload::PreCommitVote(node_digest)
+            | MessagePayload::CommitVote(node_digest) => *node_digest,
         }
     }
 }
@@ -139,42 +141,37 @@ impl ConsensusMessage {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Node {
-    pub parent: Option<Box<Node>>,
-    pub blob: Digest,
+    pub parent: Digest,
+    pub blob: String,
 }
 
 impl Node {
     pub fn default() -> Self {
         Self {
-            parent: None, // Genesis node has no parent
-            blob: Digest::default(),
+            parent: Digest::default(), // Genesis node has no parent
+            blob: String::new(),
         }
     }
 
-    pub fn digest(&self) -> Digest {
-        let parent_field = match &self.parent {
-            Some(parent_node) => parent_node.digest().to_field(),
-            None => Fr::from(0u64), // Use 0 for genesis node
+    pub fn digest(&self) -> Digest {        
+        let blob_digest = if self.blob.is_empty() {
+            Fr::from(0u64)
+        } else {
+            let b = decode(self.blob.clone()).unwrap();
+            let blk = Blk::dec(&mut b.into_iter()).unwrap();
+            blk.hash()
         };
-        
         let elements = vec![
-            parent_field,
-            self.blob.to_field(),
+            self.parent.to_field(),
+            blob_digest,
         ];
         let b: Vec<u8> = elements.hash().enc().collect();
         Digest(b.try_into().expect("Failed to convert node hash bytes to digest"))
     }
 
-    pub fn new(parent: Node, blob: Digest) -> Self {
+    pub fn new(parent: Digest, blob: String) -> Self {
         Self {
-            parent: Some(Box::new(parent)),
-            blob,
-        }
-    }
-
-    pub fn genesis(blob: Digest) -> Self {
-        Self {
-            parent: None,
+            parent,
             blob,
         }
     }
@@ -185,7 +182,7 @@ impl Node {
 pub struct QuorumCert {
     pub qc_type: ConsensusMessageType,
     pub view: View,
-    pub node: Node,
+    pub node_digest: Digest,
     pub signatures: Vec<(PublicKey, Signature)>,
 }
 
@@ -193,7 +190,7 @@ impl PartialEq for QuorumCert {
     fn eq(&self, other: &Self) -> bool {
         self.qc_type == other.qc_type
             && self.view == other.view
-            && self.node == other.node
+            && self.node_digest == other.node_digest
     }
 }
 
@@ -202,15 +199,15 @@ impl QuorumCert {
         Self {
             qc_type: ConsensusMessageType::Prepare,
             view: View::default(),
-            node: Node::default(),
+            node_digest: Digest::default(),
             signatures: Vec::new(),
         }
     }
-    pub fn new(qc_type: ConsensusMessageType, view: View, node: Node) -> Self {
+    pub fn new(qc_type: ConsensusMessageType, view: View, node_digest: Digest) -> Self {
         Self {
             qc_type,
             view,
-            node,
+            node_digest,
             signatures: Vec::new(),
         }
     }
@@ -218,7 +215,7 @@ impl QuorumCert {
         let elements = vec![
             self.qc_type.to_field(),
             self.view.digest(),
-            self.node.digest().to_field(),
+            self.node_digest.to_field(),
         ];
         let b: Vec<u8> = elements.hash().enc().collect();
         Digest(b.try_into().expect("Failed to convert qc hash bytes to digest"))

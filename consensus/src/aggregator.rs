@@ -1,6 +1,6 @@
 use crate::QuorumCert;
 use crate::config::{Committee, Stake};
-use crate::consensus::{ConsensusMessageType, Node, View};
+use crate::consensus::{ConsensusMessageType, View};
 use crate::error::{ConsensusError, ConsensusResult};
 use std::collections::{HashMap, HashSet};
 use crypto::{Digest, PublicKey, Signature};
@@ -35,40 +35,40 @@ impl Aggregator {
             .append(author, qc, &self.committee)
     }
 
-    pub fn add_prepare_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<Option<QuorumCert>> {
+    pub fn add_prepare_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<Option<QuorumCert>> {
         // TODO: A bad node may make us run out of memory by sending many timeouts
         // with different round numbers or different digests.
 
         self.prepare_aggregators
             .entry(view.clone())
             .or_insert_with(HashMap::new)
-            .entry(node.digest())
+            .entry(node_digest)
             .or_insert_with(|| Box::new(QCMaker::new()))
-            .append(author, view, signature, &self.committee, node, ConsensusMessageType::Prepare)
+            .append(author, view, signature, &self.committee, node_digest, ConsensusMessageType::Prepare)
     }
 
-    pub fn add_pre_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<Option<QuorumCert>> {
+    pub fn add_pre_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<Option<QuorumCert>> {
         // TODO: A bad node may make us run out of memory by sending many timeouts
         // with different round numbers or different digests.
 
         self.pre_commit_aggregators
             .entry(view.clone())
             .or_insert_with(HashMap::new)
-            .entry(node.digest())
+            .entry(node_digest)
             .or_insert_with(|| Box::new(QCMaker::new()))
-            .append(author, view, signature, &self.committee, node, ConsensusMessageType::PreCommit)
+            .append(author, view, signature, &self.committee, node_digest, ConsensusMessageType::PreCommit)
     }
 
-    pub fn add_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<Option<QuorumCert>> {
+    pub fn add_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<Option<QuorumCert>> {
         // TODO: A bad node may make us run out of memory by sending many timeouts
         // with different round numbers or different digests.
 
         self.commit_aggregators
             .entry(view.clone())
             .or_insert_with(HashMap::new)
-            .entry(node.digest())
+            .entry(node_digest)
             .or_insert_with(|| Box::new(QCMaker::new()))
-            .append(author, view, signature, &self.committee, node, ConsensusMessageType::Commit)
+            .append(author, view, signature, &self.committee, node_digest, ConsensusMessageType::Commit)
     }
 
     pub fn cleanup(&mut self) {
@@ -95,7 +95,7 @@ impl QCMaker {
     }
 
     /// Try to append a signature to a quorum.
-    pub fn append(&mut self, author: PublicKey, view: View, signature: Signature, committee: &Committee, node: Node, qc_type: ConsensusMessageType) -> ConsensusResult<Option<QuorumCert>> {
+    pub fn append(&mut self, author: PublicKey, view: View, signature: Signature, committee: &Committee, node_digest: Digest, qc_type: ConsensusMessageType) -> ConsensusResult<Option<QuorumCert>> {
         // Ensure it is the first time this authority votes.
         crate::ensure!(
             self.used.insert(author),
@@ -109,7 +109,7 @@ impl QCMaker {
             let prepare_qc = QuorumCert {
                 qc_type,
                 view,
-                node: node.clone(),
+                node_digest,
                 signatures: self.votes.clone(),
             };
             return Ok(Some(prepare_qc));

@@ -16,14 +16,14 @@ impl Core {
         }
         
         // check if blob is locked, else get proposal from replica
-        let blob = if self.lock_blob != Digest::default() {
+        let blob = if self.lock_blob != String::new() {
             self.lock_blob.clone()
         } else {
             // TODO: get proposal from replica
-            Digest::default()
+            "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string()
         };
 
-        let parent = high_qc.node.clone();
+        let parent = high_qc.node_digest.clone();
         let node = Node::new(parent, blob);
 
         // Create the prepare message with signature service
@@ -87,25 +87,16 @@ impl Core {
         self.safe_node(&node, &high_qc)?;
         self.voted_node = node.clone();
 
-        self.send_prepare_vote(node).await?;
+        self.send_prepare_vote(node.digest()).await?;
         Ok(())
     }
 
     fn extend(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {        
         // Check if the node's parent matches the QC's node
-        match &node.parent {
-            Some(parent_node) => {
-                if **parent_node != high_qc.node {
-                    return Err(ConsensusError::InvalidQC(
-                        format!("expect parent {:?}, got {:?}", high_qc.node, **parent_node)
-                    ));
-                }
-            }
-            None => {
-                return Err(ConsensusError::InvalidQC(
-                    "there's no parent node in proposal node".to_string()
-                ));
-            }
+        if node.parent != high_qc.node_digest {
+            return Err(ConsensusError::InvalidQC(
+                format!("expect parent {:?}, got {:?}", high_qc.node_digest, node.parent)
+            ));
         }
         Ok(())
     }
@@ -129,11 +120,8 @@ impl Core {
         if high_qc.view.round > lock_qc.view.round {
             return Ok(());
         }
-        
-        if let Some(parent_node) = &node.parent {
-            if **parent_node == lock_qc.node {
-                return Ok(());
-            }
+        if node.parent == lock_qc.node_digest {
+            return Ok(());
         }
 
         Err(ConsensusError::SafeNodeViolation(
@@ -142,7 +130,7 @@ impl Core {
         ))
     }
 
-    pub async fn send_prepare_vote(&mut self, node: Node) -> ConsensusResult<()> {
+    pub async fn send_prepare_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
         debug!("Sending PrepareVote message");
         
         // Create the prepare vote message with signature service
@@ -150,7 +138,7 @@ impl Core {
             ConsensusMessageType::Prepare,
             self.name,
             self.view.clone(), 
-            MessagePayload::PrepareVote(node),
+            MessagePayload::PrepareVote(node_digest),
             self.signature_service.clone(),
         ).await;
 

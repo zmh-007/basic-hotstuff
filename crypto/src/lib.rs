@@ -14,7 +14,7 @@ use std::convert::{TryFrom, TryInto};
 pub mod crypto_tests;
 
 /// Represents a hash digest (32 bytes).
-#[derive(Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
+#[derive(Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd, Copy)]
 pub struct Digest(pub [u8; 32]);
 
 impl Digest {

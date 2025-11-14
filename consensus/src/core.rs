@@ -30,7 +30,7 @@ pub struct Core {
     pub voted_node: Node,
     pub prepare_qc: QuorumCert,
     pub lock_qc: QuorumCert,
-    pub lock_blob: Digest,
+    pub lock_blob: String,
 }
 
 impl Core {
@@ -63,7 +63,7 @@ impl Core {
                 voted_node: Node::default(),
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
-                lock_blob: Digest::default(),
+                lock_blob: String::new(),
             };
             
             core.run().await;
@@ -112,20 +112,20 @@ impl Core {
             (crate::consensus::ConsensusMessageType::Prepare, MessagePayload::Prepare(node, qc)) => {
                 self.handle_prepare(message.author, message.view, node.clone(), qc.clone()).await
             },
-            (crate::consensus::ConsensusMessageType::Prepare, MessagePayload::PrepareVote(node)) => {
-                self.handle_prepare_vote(message.author, message.view, message.signature, node.clone()).await
+            (crate::consensus::ConsensusMessageType::Prepare, MessagePayload::PrepareVote(node_digest)) => {
+                self.handle_prepare_vote(message.author, message.view, message.signature, node_digest.clone()).await
             },
             (crate::consensus::ConsensusMessageType::PreCommit, MessagePayload::PreCommit(qc)) => {
                 self.handle_pre_commit(message.author, message.view, qc.clone()).await
             },
-            (crate::consensus::ConsensusMessageType::PreCommit, MessagePayload::PreCommitVote(node)) => {
-                self.handle_pre_commit_vote(message.author, message.view, message.signature, node.clone()).await
+            (crate::consensus::ConsensusMessageType::PreCommit, MessagePayload::PreCommitVote(node_digest)) => {
+                self.handle_pre_commit_vote(message.author, message.view, message.signature, node_digest.clone()).await
             },
             (crate::consensus::ConsensusMessageType::Commit, MessagePayload::Commit(qc)) => {
                 self.handle_commit(message.author, message.view, qc.clone()).await
             },
-            (crate::consensus::ConsensusMessageType::Commit, MessagePayload::CommitVote(node)) => {
-                self.handle_commit_vote(message.author, message.view, message.signature, node.clone()).await
+            (crate::consensus::ConsensusMessageType::Commit, MessagePayload::CommitVote(node_digest)) => {
+                self.handle_commit_vote(message.author, message.view, message.signature, node_digest.clone()).await
             },
             (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc)) => {
                 self.handle_decide(message.author, message.view, qc.clone()).await

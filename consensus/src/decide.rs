@@ -2,11 +2,11 @@ use bytes::Bytes;
 use crypto::{Digest, PublicKey, Signature};
 use log::{debug, info, warn};
 use tokio::time;
-use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, Node, View}, core::Core, error::ConsensusResult};
+use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 
 
 impl Core {
-    pub async fn handle_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node: Node) -> ConsensusResult<()> {
+    pub async fn handle_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<()> {
         info!("Received commit vote for view {:?}", view);
         if view != self.view {
             warn!("Received commit vote for view {:?}, but current view is {:?}", view, self.view);
@@ -17,7 +17,7 @@ impl Core {
             return Ok(());
         }
 
-        if let Some(commit_qc) = self.aggregator.add_commit_vote(author, view.clone(), signature, node)? {
+        if let Some(commit_qc) = self.aggregator.add_commit_vote(author, view.clone(), signature, node_digest)? {
             debug!("Formed Commit QC for view {:?}", view);
             self.send_decide(commit_qc).await?;
         }
@@ -67,7 +67,7 @@ impl Core {
             return Ok(());
         }
         commit_qc.verify(&self.committee)?;
-        if let Err(e) = self.tx_commit.send(commit_qc.node.blob.clone()).await {
+        if let Err(e) = self.tx_commit.send(commit_qc.node_digest.clone()).await {
             warn!("Failed to send block through the commit channel: {}", e);
         }
 
@@ -80,6 +80,6 @@ impl Core {
     }
 
     fn unlock_blob(&mut self) {
-        self.lock_blob = Digest::default();
+        self.lock_blob = String::new();
     }
 }
