@@ -75,7 +75,7 @@ pub enum MessagePayload {
     PreCommitVote(Digest),
     Commit(QuorumCert),
     CommitVote(Digest),
-    Decide(QuorumCert),
+    Decide(QuorumCert, String),
 }
 
 impl MessagePayload {
@@ -83,8 +83,8 @@ impl MessagePayload {
         match self {
             MessagePayload::NewView(qc)
             | MessagePayload::PreCommit(qc)
-            | MessagePayload::Commit(qc)
-            | MessagePayload::Decide(qc) => qc.digest(),
+            | MessagePayload::Commit(qc) => qc.digest(),
+            MessagePayload::Decide(qc, _) => qc.digest(),
             MessagePayload::Prepare(node, qc) => {
                 // Combine node and qc digests
                 let elements = vec![

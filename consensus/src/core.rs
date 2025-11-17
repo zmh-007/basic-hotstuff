@@ -127,7 +127,7 @@ impl Core {
             (crate::consensus::ConsensusMessageType::Commit, MessagePayload::CommitVote(node_digest)) => {
                 Ok(())
             },
-            (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc)) => {
+            (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc, _)) => {
                 self.handle_decide(message.author, message.view, qc.clone()).await
             },
             _ => {
