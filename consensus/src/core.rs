@@ -131,8 +131,8 @@ impl Core {
                 self.handle_decide(message.author, message.view, qc.clone()).await
             },
             _ => {
-                error!("Mismatched message type and payload");
-                Ok(())
+                error!("Mismatched message type {:?} and payload", message.msg_type);
+                Err(crate::ConsensusError::InvalidPayload)
             }
         }
     }

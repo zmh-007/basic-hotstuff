@@ -20,8 +20,10 @@ impl Core {
 
 pub fn verify_signature(digest: &Digest, author: &PublicKey, sig: &Signature) -> ConsensusResult<()>{
     let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    let signature = blst::min_pk::Signature::from_bytes(&sig.0).expect("Invalid signature bytes");
-    let pk = blst::min_pk::PublicKey::from_bytes(&author.0).expect("Invalid public key bytes");
+    let signature = blst::min_pk::Signature::from_bytes(&sig.0)
+        .map_err(|_| ConsensusError::InvalidSignature("Invalid signature bytes".to_string()))?;
+    let pk = blst::min_pk::PublicKey::from_bytes(&author.0)
+        .map_err(|_| ConsensusError::InvalidSignature("Invalid public key bytes".to_string()))?;
     let err = signature.verify(true, &digest.to_vec(), dst, &[], &pk, true);
     if err != blst::BLST_ERROR::BLST_SUCCESS {
         return Err(ConsensusError::InvalidSignature(author.to_string()));

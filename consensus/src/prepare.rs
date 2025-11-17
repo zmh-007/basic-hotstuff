@@ -113,11 +113,7 @@ impl Core {
         // Check safety conditions:
         // 1. highQC.view > lockQC.view OR
         // 2. node extends lockQC (node's parent equals lockQC's node)
-        // TODO::
-        if high_qc.view.height > lock_qc.view.height {
-            return Ok(());
-        }
-        if high_qc.view.round > lock_qc.view.round {
+        if (high_qc.view.height, high_qc.view.round) > (lock_qc.view.height, lock_qc.view.round) {
             return Ok(());
         }
         if node.parent == lock_qc.node_digest {
