@@ -46,12 +46,6 @@ pub enum ConsensusError {
     #[error("Received QC without a quorum")]
     QCRequiresQuorum,
 
-    #[error("Received TC without a quorum")]
-    TCRequiresQuorum,
-
-    #[error("Malformed block {0}")]
-    MalformedBlock(Digest),
-
     #[error("Received block {digest} from leader {leader} at round {view}")]
     WrongLeader {
         digest: Digest,
@@ -67,4 +61,7 @@ pub enum ConsensusError {
 
     #[error("Safe node violation: {0}")]
     SafeNodeViolation(String),
+
+    #[error("invalid aggregated public key")]
+    InvalidAggregatedPublicKey,
 }

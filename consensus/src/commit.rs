@@ -1,60 +1,10 @@
 use bytes::Bytes;
-use crypto::{Digest, PublicKey, Signature};
+use crypto::{Digest, PublicKey};
 use log::{debug, info, warn};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 
 
 impl Core {
-    pub async fn handle_pre_commit_vote(&mut self, author: PublicKey, view: View, signature: Signature, node_digest: Digest) -> ConsensusResult<()> {
-        info!("Received pre commit vote for view {:?}", view);
-        if view != self.view {
-            warn!("Received pre commit vote for view {:?}, but current view is {:?}", view, self.view);
-            return Ok(());
-        }
-        if !self.check_is_leader(&view) {
-            warn!("Received pre commit vote for view {:?}, but self {:?} not the leader", view, self.name);
-            return Ok(());
-        }
-
-        if let Some(pre_commit_qc) = self.aggregator.add_pre_commit_vote(author, view.clone(), signature, node_digest)? {
-            debug!("Formed PreCommit QC for view {:?}", view);
-            self.lock_qc_and_blob(pre_commit_qc.clone());
-            self.send_commit(pre_commit_qc).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn send_commit(&mut self, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Sending Commit message");
-        let commit_message = ConsensusMessage::new(
-            ConsensusMessageType::Commit,
-            self.name,
-            self.view.clone(), 
-            MessagePayload::Commit(pre_commit_qc.clone()),
-            self.signature_service.clone(),
-        ).await;
-
-         match bincode::serialize(&commit_message) {
-                Ok(payload) => {
-                 // broadcast the message
-                 debug!("Broadcast commit message{:?}", commit_message);
-                 let addresses = self
-                      .committee
-                      .broadcast_addresses(&self.name)
-                      .into_iter()
-                      .map(|(_, x)| x)
-                      .collect();
-                 self.network.broadcast(addresses, Bytes::from(payload)).await;
-                 debug!("Commit message broadcast successfully");
-                 self.handle_commit(self.name, self.view.clone(), pre_commit_qc.clone()).await?;
-                }
-                Err(e) => {
-                 return Err(ConsensusError::SerializationError(e));
-                }
-          }
-        Ok(())
-    }
-
     pub async fn handle_commit(&mut self, author: PublicKey, view: View, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received Commit for view {:?}", view);
         if view != self.view {

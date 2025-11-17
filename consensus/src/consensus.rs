@@ -1,6 +1,7 @@
 use crate::{LeaderElector, config::{Committee, Parameters}, core::Core, error::ConsensusResult};
 use crate::ConsensusError;
 use async_trait::async_trait;
+use blst::min_pk::AggregatePublicKey;
 use bytes::Bytes;
 use crypto::{Digest, PublicKey, SignatureService, Signature};
 use hex::decode;
@@ -183,7 +184,9 @@ pub struct QuorumCert {
     pub qc_type: ConsensusMessageType,
     pub view: View,
     pub node_digest: Digest,
-    pub signatures: Vec<(PublicKey, Signature)>,
+    pub agg_sig: Signature,
+    pub agg_pk: PublicKey,
+    pub public_keys: Vec<PublicKey>,
 }
 
 impl PartialEq for QuorumCert {
@@ -200,15 +203,9 @@ impl QuorumCert {
             qc_type: ConsensusMessageType::Prepare,
             view: View::default(),
             node_digest: Digest::default(),
-            signatures: Vec::new(),
-        }
-    }
-    pub fn new(qc_type: ConsensusMessageType, view: View, node_digest: Digest) -> Self {
-        Self {
-            qc_type,
-            view,
-            node_digest,
-            signatures: Vec::new(),
+            agg_sig: Signature::default(),
+            agg_pk: PublicKey::default(),
+            public_keys: Vec::new(),
         }
     }
     fn digest(&self) -> Digest {
@@ -224,7 +221,7 @@ impl QuorumCert {
         // Ensure the QC has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
-        for (name, _) in self.signatures.iter() {
+        for name in self.public_keys.iter() {
             crate::ensure!(!used.contains(name), ConsensusError::AuthorityReuse(*name));
             let voting_rights = committee.stake(name);
             crate::ensure!(voting_rights > 0, ConsensusError::UnknownAuthority(*name));
@@ -236,10 +233,19 @@ impl QuorumCert {
             ConsensusError::QCRequiresQuorum
         );
 
-        // Check the signature.
-        for (author, sig) in &self.signatures {
-            verify_signature(&self.digest(), author, sig)?;
+        // Check the aggregated pk
+        let mut public_keys = Vec::with_capacity(self.public_keys.len());
+        for pk in self.public_keys.iter() {
+            public_keys.push(blst::min_pk::PublicKey::from_bytes(&pk.0).expect("Invalid public key bytes"));
         }
+        let pks: Vec<_> = public_keys.iter().collect();
+        let aggregated_pk = AggregatePublicKey::aggregate(&pks, true).expect("failed to aggregate public keys");
+        if aggregated_pk.to_public_key().to_bytes() != self.agg_pk.0 {
+            return Err(ConsensusError::InvalidAggregatedPublicKey);
+        }
+
+        // Check the signature.
+        verify_signature(&self.digest(), &self.agg_pk, &self.agg_sig)?;
         Ok(())
     }
 }
