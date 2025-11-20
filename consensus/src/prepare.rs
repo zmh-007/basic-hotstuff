@@ -1,7 +1,6 @@
 use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Node, QuorumCert, View};
 use crate::core::Core;
 use crate::error::ConsensusResult;
-use bytes::Bytes;
 use crypto::{Digest, PublicKey};
 use log::{debug, warn};
 use crate::ConsensusError;
@@ -40,13 +39,7 @@ impl Core {
             Ok(payload) => {
                 // broadcast the message
                 debug!("Broadcast {:?}", prepare_message);
-                let addresses = self
-                    .committee
-                    .broadcast_addresses(&self.name)
-                    .into_iter()
-                    .map(|(_, x)| x)
-                    .collect();
-                self.network.broadcast(addresses, Bytes::from(payload)).await;
+                self.network.send(None, payload)?;
                 debug!("Prepare message broadcast successfully");
                 self.handle_prepare(self.name, self.view.clone(), node, high_qc).await?;
             }
@@ -144,11 +137,7 @@ impl Core {
                 // send the message to leader
                 let leader = self.leader_elector.get_leader(&self.view);
                 debug!("Sending PrepareVote to leader {:?}", leader);
-                let address = self
-                    .committee
-                    .address(&leader)
-                    .expect("The leader is not in the committee");
-                self.network.send(address, Bytes::from(payload)).await;
+                self.network.send(None, payload)?;
                 debug!("PrepareVote message sent successfully");
             }
             Err(e) => {

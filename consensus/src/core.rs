@@ -5,11 +5,12 @@ use crate::{LeaderElector, Parameters};
 use crate::config::Committee;
 use crate::consensus::{ConsensusMessage, MessagePayload, Node, QuorumCert, View};
 use crypto::{Digest, PublicKey, SignatureService};
+use libp2p::PeerId;
 use log::{error, warn, info};
 use async_recursion::async_recursion;
-use network::SimpleSender;
+use network::P2pLibp2p;
 use store::Store;
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{self, Sender};
 use crate::utils::verify_signature;
 
 pub struct Core {
@@ -19,10 +20,10 @@ pub struct Core {
     store: Store,
     pub signature_service: SignatureService,
     pub leader_elector: LeaderElector,
-    pub rx_message: Receiver<ConsensusMessage>,
+    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
     pub tx_commit: Sender<Digest>,
     pub timer: Timer,
-    pub network: SimpleSender,
+    pub network: P2pLibp2p,
     pub aggregator: Aggregator,
 
     // state variables
@@ -42,7 +43,8 @@ impl Core {
         leader_elector: LeaderElector,
         store: Store,
         parameters: Parameters,
-        rx_message: Receiver<ConsensusMessage>,
+        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+        network: P2pLibp2p,
         tx_commit: Sender<Digest>,
     ) {
         tokio::spawn(async move {     
@@ -53,10 +55,10 @@ impl Core {
                 signature_service,
                 leader_elector,
                 store,
-                rx_message,
+                msg_rx,
                 tx_commit,
                 timer: Timer::new(parameters.timeout_delay),
-                network: SimpleSender::new(),
+                network,
                 aggregator: Aggregator::new(committee),
 
                 view: View::default(),
@@ -79,7 +81,7 @@ impl Core {
         // Main consensus loop
         loop {
             let result = tokio::select! {
-                Some(message) = self.rx_message.recv() => {
+                Some((peer_id, message)) = self.msg_rx.recv() => {
                     // Check message
                     match self.check_consensus_message(&message) {
                         Ok(_) => self.handle_consensus_message(message).await,

@@ -1,13 +1,7 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
-mod error;
-mod receiver;
-mod reliable_sender;
-mod simple_sender;
+pub mod error;
+mod msg_protocol;
+pub mod p2p_node;
 
-#[cfg(test)]
-#[path = "tests/common.rs"]
-pub mod common;
-
-pub use crate::receiver::{MessageHandler, Receiver, Writer};
-pub use crate::reliable_sender::{CancelHandler, ReliableSender};
-pub use crate::simple_sender::SimpleSender;
+pub use error::{P2pError, P2pResult};
+pub use msg_protocol::MsgEvent;
+pub use p2p_node::{P2pConfig, P2pLibp2p};

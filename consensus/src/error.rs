@@ -1,4 +1,5 @@
 use crypto::{Digest, PublicKey};
+use network::P2pError;
 use store::StoreError;
 use thiserror::Error;
 
@@ -24,6 +25,9 @@ pub type ConsensusResult<T> = Result<T, ConsensusError>;
 pub enum ConsensusError {
     #[error("Network error: {0}")]
     NetworkError(#[from] std::io::Error),
+
+    #[error("P2P network error: {0}")]
+    P2pNetworkError(#[from] P2pError),
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] Box<bincode::ErrorKind>),

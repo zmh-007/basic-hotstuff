@@ -1,4 +1,3 @@
-use bytes::Bytes;
 use crypto::{Digest, PublicKey};
 use log::{debug, info, warn};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
@@ -44,13 +43,9 @@ impl Core {
          match bincode::serialize(&commit_vote_message) {
                 Ok(payload) => {
                     // send the message to leader
-                    debug!("send commit vote to leader: {:?}", commit_vote_message);
                     let leader = self.leader_elector.get_leader(&self.view);
-                    let address = self
-                        .committee
-                        .address(&leader)
-                        .expect("The leader is not in the committee");
-                    self.network.send(address, Bytes::from(payload)).await;
+                    debug!("send commit vote to leader: {:?}", leader);
+                    self.network.send(None, payload)?;
                     debug!("Commit Vote message sent successfully");
                 }
                 Err(e) => {

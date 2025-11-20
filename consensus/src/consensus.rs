@@ -1,22 +1,19 @@
 use crate::{LeaderElector, config::{Committee, Parameters}, core::Core, error::ConsensusResult};
 use crate::ConsensusError;
-use async_trait::async_trait;
 use blst::min_pk::AggregatePublicKey;
-use bytes::Bytes;
 use crypto::{Digest, PublicKey, SignatureService, Signature};
 use hex::decode;
 use l0::Blk;
-use log::{info};
-use network::{MessageHandler, Receiver as NetworkReceiver, Writer};
+use libp2p::PeerId;
+use log::{error, info};
+use network::P2pLibp2p;
 use serde::{Deserialize, Serialize};
 use zk::{AsBytes, ToHash, Fr};
-use std::{collections::HashSet, error::Error};
+use std::{collections::HashSet};
 use store::Store;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::Sender;
 use crate::utils::verify_signature;
-
-/// The default channel capacity for each channel of the consensus.
-pub const CHANNEL_CAPACITY: usize = 1_000;
+use tokio::sync::mpsc;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct View {
@@ -262,24 +259,18 @@ impl Consensus {
         store: Store,
         tx_commit: Sender<Digest>,
     ) { 
-        let (tx_consensus, rx_consensus) = channel(CHANNEL_CAPACITY);
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<(PeerId, ConsensusMessage)>();
 
         // Spawn the network receiver.
-        let mut address = committee
-            .address(&name)
-            .expect("Our public key is not in the committee");
-        address.set_ip("0.0.0.0".parse().unwrap());
-        NetworkReceiver::spawn(
-            address,
-            /* handler */
-            ConsensusReceiverHandler {
-                tx_consensus,
-            },
-        );
-        info!(
-            "Node {} listening to consensus messages on {}",
-            name, address
-        );
+        let mut p2p = P2pLibp2p::default();
+        p2p.init(move |id, payload: Vec<u8>| {
+            let msg: ConsensusMessage = bincode::deserialize(&payload)
+                .expect("Failed to deserialize message from consensus module");
+            if let Err(e) = msg_tx.send((id, msg)) {
+                error!("Failed to send message to consensus module: {}", e);
+            }
+        }).expect("failed to initialize p2p node");
+        info!("Local peer ID: {}", p2p.local_peer_id());
 
         // Make the leader election module.
         let leader_elector = LeaderElector::new(committee.clone());
@@ -292,30 +283,9 @@ impl Consensus {
             leader_elector,
             store.clone(),
             parameters,
-            /* rx_message */ rx_consensus,
+            /* rx_message */ msg_rx,
+            p2p,
             tx_commit,
         );
-    }
-}
-
-/// Defines how the network receiver handles incoming primary messages.
-#[derive(Clone)]
-struct ConsensusReceiverHandler {
-    tx_consensus: Sender<ConsensusMessage>,
-}
-
-#[async_trait]
-impl MessageHandler for ConsensusReceiverHandler {
-    async fn dispatch(&self, _writer: &mut Writer, serialized: Bytes) -> Result<(), Box<dyn Error>> {
-        // Deserialize and parse the message.
-        let message: ConsensusMessage = bincode::deserialize(&serialized)
-            .map_err(ConsensusError::from)?;
-        
-        self.tx_consensus
-            .send(message)
-            .await
-            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
-        
-        Ok(())
     }
 }

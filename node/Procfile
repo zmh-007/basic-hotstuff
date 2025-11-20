@@ -1,4 +1,4 @@
-replica0: ../target/release/node -vv run --committee ./test/.committee.json --store ./test/db-0 --parameters ./test/.parameters.json --keys ./test/.node-0.json
-replica1: ../target/release/node -vv run --committee ./test/.committee.json --store ./test/db-1 --parameters ./test/.parameters.json --keys ./test/.node-1.json
-replica2: ../target/release/node -vv run --committee ./test/.committee.json --store ./test/db-2 --parameters ./test/.parameters.json --keys ./test/.node-2.json
-replica3: ../target/release/node -vv run --committee ./test/.committee.json --store ./test/db-3 --parameters ./test/.parameters.json --keys ./test/.node-3.json
+replica0: LEADER_NODES="" ../target/release/node -vvv run --committee ./test/.committee.json --store ./test/db-0 --parameters ./test/.parameters.json --keys ./test/.node-0.json
+replica1: LEADER_NODES="" ../target/release/node -vvv run --committee ./test/.committee.json --store ./test/db-1 --parameters ./test/.parameters.json --keys ./test/.node-1.json
+replica2: LEADER_NODES="" ../target/release/node -vvv run --committee ./test/.committee.json --store ./test/db-2 --parameters ./test/.parameters.json --keys ./test/.node-2.json
+replica3: LEADER_NODES="" ../target/release/node -vvv run --committee ./test/.committee.json --store ./test/db-3 --parameters ./test/.parameters.json --keys ./test/.node-3.json

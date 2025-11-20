@@ -1,7 +1,6 @@
 use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, QuorumCert, View};
 use crate::core::Core;
 use crate::error::ConsensusResult;
-use bytes::Bytes;
 use crypto::{PublicKey};
 use log::{debug, info, warn};
 use crate::{ConsensusError};
@@ -31,11 +30,7 @@ impl Core {
                     self.handle_new_view(self.name, self.view.clone(), prepare_qc.clone()).await?;
                 } else {
                     debug!("Sending {:?} to {}", new_view_message, leader);
-                    let address = self
-                        .committee
-                        .address(&leader)
-                        .expect("The next leader is not in the committee");
-                    self.network.send(address, Bytes::from(payload)).await;
+                    self.network.send(None, payload)?;
                 }
                 debug!("NewView message sent successfully");
             }
