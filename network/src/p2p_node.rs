@@ -129,7 +129,7 @@ impl P2pLibp2p {
             let new_keypair = identity::Keypair::generate_ed25519();
             let encoded = new_keypair.to_protobuf_encoding()
                 .map_err(|e| P2pError::KeypairGeneration(format!("Failed to encode: {}", e)))?;
-            info!("Generated new keypair. To reuse this identity, set EON_PRIVATE_KEY={}", general_purpose::STANDARD.encode(&encoded));
+            info!("Generated new keypair. To reuse this identity, set P2P_PRIVATE_KEY={}", general_purpose::STANDARD.encode(&encoded));
             Ok(new_keypair)
         }
     }
