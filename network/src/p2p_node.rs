@@ -191,7 +191,7 @@ impl P2pLibp2p {
             .with_behaviour(|key| {
                 Ok(P2pBehaviour {
                     ping: ping::Behaviour::new(ping::Config::new().with_interval(config.ping_interval)),
-                    identify: identify::Behaviour::new(identify::Config::new("/pbft-p2p/1.0.0".to_string(), key.public())),
+                    identify: identify::Behaviour::new(identify::Config::new("/agg-p2p/1.0.0".to_string(), key.public())),
                     msg: MsgProtocol::new_with_callback(on_msg),
                 })
             })

@@ -28,7 +28,7 @@ pub struct MsgProtocol {
 
 impl MsgProtocol {
     pub fn new_with_callback(on_msg: impl Fn(PeerId, Vec<u8>) + Send + Sync + 'static) -> Self {
-        let protocol = StreamProtocol::new("/msg/1.0.0");
+        let protocol = StreamProtocol::new("/aggregator/1.0.0");
         let config = Config::default();
 
         Self {
