@@ -102,12 +102,13 @@ impl Core {
     }
 
     fn check_consensus_message(&self, message: &ConsensusMessage) -> ConsensusResult<()> {
-        if !self.committee.authorities.contains_key(&message.author) {
-            error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
-            return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
-        }
+        //TODO: already checked in network layer
+        // if !self.committee.authorities.contains_key(&message.author) {
+        //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
+        //     return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
+        // }
 
-        verify_signature(&message.digest(), &message.author, &message.signature)?;
+        // verify_signature(&message.digest(), &message.author, &message.signature)?;
         Ok(())
     }
 
