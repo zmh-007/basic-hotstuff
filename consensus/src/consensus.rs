@@ -168,10 +168,10 @@ impl Node {
             let blk = Blk::dec(&mut b.into_iter()).unwrap();
             blk.hash()
         };
-        let elements = vec![
+        let elements = (
             self.parent.to_field(),
             blob_digest,
-        ];
+        );
         let b: Vec<u8> = elements.hash().enc().collect();
         Digest(b.try_into().expect("Failed to convert node hash bytes to digest"))
     }
