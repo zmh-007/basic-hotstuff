@@ -32,6 +32,9 @@ pub struct Core {
     pub prepare_qc: QuorumCert,
     pub lock_qc: QuorumCert,
     pub lock_blob: String,
+    
+    // View synchronization
+    pub consecutive_timeouts: u64,
 }
 
 impl Core {
@@ -66,6 +69,7 @@ impl Core {
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
                 lock_blob: String::new(),
+                consecutive_timeouts: 0,
             };
             
             core.run().await;
@@ -81,7 +85,7 @@ impl Core {
         // Main consensus loop
         loop {
             let result = tokio::select! {
-                Some((peer_id, message)) = self.msg_rx.recv() => {
+                Some((_peer_id, message)) = self.msg_rx.recv() => {
                     // Check message
                     match self.check_consensus_message(&message) {
                         Ok(_) => self.handle_consensus_message(message).await,
@@ -99,6 +103,7 @@ impl Core {
 
     fn check_consensus_message(&self, message: &ConsensusMessage) -> ConsensusResult<()> {
         if !self.committee.authorities.contains_key(&message.author) {
+            error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
             return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
         }
 
@@ -144,7 +149,20 @@ impl Core {
     }
 
     async fn local_timeout_round(&mut self) -> ConsensusResult<()> {
-        warn!("Timeout occurred for view {:?}", self.view);
+        self.consecutive_timeouts += 1;
+        warn!("Timeout occurred for view {:?} (consecutive: {})", 
+              self.view, self.consecutive_timeouts);
+        // Apply exponential backoff for timeout duration with overflow protection
+        let new_timeout = if self.consecutive_timeouts == 0 {
+            self.parameters.timeout_delay
+        } else {
+            // Use saturating arithmetic to prevent overflow
+            let backoff_multiplier = 2_u64.saturating_pow((self.consecutive_timeouts - 1) as u32);
+            self.parameters.timeout_delay.saturating_mul(backoff_multiplier)
+        };
+               
+        // Update timer with new timeout
+        self.timer = Timer::new(new_timeout);
         self.start_new_round(self.view.round + 1).await;
         Ok(())
     }

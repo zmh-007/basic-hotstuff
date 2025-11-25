@@ -1,7 +1,7 @@
 use crypto::{PublicKey};
 use log::{info, warn};
 use tokio::time;
-use crate::{QuorumCert, consensus::{ConsensusMessageType, View}, core::Core, error::ConsensusResult};
+use crate::{QuorumCert, consensus::{ConsensusMessageType, View}, core::Core, error::ConsensusResult, timer::Timer};
 
 
 impl Core {
@@ -25,6 +25,9 @@ impl Core {
         self.aggregator.cleanup();
         self.unlock_blob();
         self.view.height = commit_qc.view.height + 1;
+        self.consecutive_timeouts = 0;
+        // Reset timer to original timeout
+        self.timer = Timer::new(self.parameters.timeout_delay);
         self.start_new_round(0).await;
         Ok(())
     }

@@ -42,7 +42,7 @@ impl Core {
     }
 
     pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
-        info!("Received NewView for view {:?}", view);
+        info!("Received NewView for view {:?} from {:?}", view, author);
         if view != self.view {
             warn!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
