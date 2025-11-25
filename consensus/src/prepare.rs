@@ -50,13 +50,9 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_prepare(&mut self, author: PublicKey, view: View, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_prepare(&mut self, _: PublicKey, view: View, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
         debug!("Received prepare for view {:?}", view);
         if view != self.view {
-            return Ok(());
-        }
-        if !self.check_from_leader(&view, author) {
-            warn!("Received prepare for view {:?}, but {:?} not the leader", view, author);
             return Ok(());
         }
         if high_qc.qc_type != ConsensusMessageType::Prepare {

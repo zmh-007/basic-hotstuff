@@ -5,13 +5,8 @@ use crate::{QuorumCert, consensus::{ConsensusMessageType, View}, core::Core, err
 
 
 impl Core {
-    pub async fn handle_decide(&mut self, author: PublicKey, view: View, commit_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_decide(&mut self, _: PublicKey, view: View, commit_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received Decide for view {:?}", view);
-
-        if !self.check_from_leader(&view, author) {
-            warn!("Received decide for view {:?} from {:?}, but not from leader", view, author);
-            return Ok(());
-        }
         if commit_qc.qc_type != ConsensusMessageType::Commit {
             warn!("Received decide with invalid QC type: {:?}", commit_qc.qc_type);
             return Ok(());

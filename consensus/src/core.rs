@@ -11,7 +11,6 @@ use async_recursion::async_recursion;
 use network::P2pLibp2p;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use crate::utils::verify_signature;
 
 pub struct Core {
     pub name: PublicKey,
@@ -101,7 +100,7 @@ impl Core {
         }
     }
 
-    fn check_consensus_message(&self, message: &ConsensusMessage) -> ConsensusResult<()> {
+    fn check_consensus_message(&self, _: &ConsensusMessage) -> ConsensusResult<()> {
         //TODO: already checked in network layer
         // if !self.committee.authorities.contains_key(&message.author) {
         //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);

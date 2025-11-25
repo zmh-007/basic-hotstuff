@@ -4,14 +4,10 @@ use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusM
 
 
 impl Core {
-    pub async fn handle_pre_commit(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {
             warn!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
-            return Ok(());
-        }
-        if !self.check_from_leader(&view, author) {
-            warn!("Received PreCommit for view {:?}, but author {:?} is not the leader", view, author);
             return Ok(());
         }
         if prepare_qc.qc_type != ConsensusMessageType::Prepare {

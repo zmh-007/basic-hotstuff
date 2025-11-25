@@ -8,11 +8,6 @@ impl Core {
         leader == self.name
     }
 
-    pub fn check_from_leader(&self, view: &View, author: PublicKey) -> bool {
-        let leader = self.leader_elector.get_leader(view);
-        leader == author
-    }
-
     pub fn check_node(&self, node_digest: &Digest) -> bool {
         self.voted_node != Node::default() && self.voted_node.digest() == *node_digest
     }
