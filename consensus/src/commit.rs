@@ -40,7 +40,7 @@ impl Core {
                 Ok(payload) => {
                     // send the message to leader
                     let leader = self.leader_elector.get_leader(&self.view);
-                    debug!("send commit vote to leader: {:?}", leader);
+                    debug!("send commit vote {:?} to leader: {:?}", node_digest, leader);
                     self.network.send(None, payload)?;
                     debug!("Commit Vote message sent successfully");
                 }

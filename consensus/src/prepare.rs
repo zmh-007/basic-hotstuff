@@ -132,7 +132,7 @@ impl Core {
             Ok(payload) => {
                 // send the message to leader
                 let leader = self.leader_elector.get_leader(&self.view);
-                debug!("Sending PrepareVote to leader {:?}", leader);
+                debug!("Sending PrepareVote {:?} to leader {:?}", node_digest, leader);
                 self.network.send(None, payload)?;
                 debug!("PrepareVote message sent successfully");
             }
