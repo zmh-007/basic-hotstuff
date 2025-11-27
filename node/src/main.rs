@@ -69,11 +69,7 @@ async fn main() {
             store,
         } => match Node::new(&committee, &keys, &store, parameters).await {
             Ok(mut node) => {
-                tokio::spawn(async move {
-                    node.start().await;
-                })
-                .await
-                .expect("Failed to start node");
+                node.start().await;
             }
             Err(e) => error!("{}", e),
         },
