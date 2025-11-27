@@ -27,7 +27,7 @@ impl Core {
     }
 
     pub async fn send_pre_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
-        debug!("Sending PreCommitVote message");
+        info!("Sending PreCommitVote message");
         let pre_commit_vote_message = ConsensusMessage::new(
             ConsensusMessageType::PreCommit,
             self.name,

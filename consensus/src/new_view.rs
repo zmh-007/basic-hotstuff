@@ -8,7 +8,7 @@ use crate::{ConsensusError};
 impl Core {
     /// Send NewView message with current PrepareQC
     pub async fn send_new_view(&mut self) -> ConsensusResult<()> {
-        debug!("Sending NewView message");
+        info!("Sending NewView message");
         // Get the current PrepareQC
         let prepare_qc = self.prepare_qc.clone();
         

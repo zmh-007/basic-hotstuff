@@ -2,13 +2,13 @@ use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, N
 use crate::core::Core;
 use crate::error::ConsensusResult;
 use crypto::{Digest, PublicKey};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use crate::ConsensusError;
 
 impl Core {
     /// Send Prepare message with current PrepareQC
     pub async fn send_prepare(&mut self, high_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Sending Prepare message");
+        info!("Sending Prepare message");
         if !self.check_is_leader(&self.view) {
             warn!("Not the leader for view {:?}, cannot send Prepare message", self.view);
             return Ok(());
@@ -51,7 +51,7 @@ impl Core {
     }
 
     pub async fn handle_prepare(&mut self, _: PublicKey, view: View, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
-        debug!("Received prepare for view {:?}", view);
+        info!("Received prepare for view {:?}", view);
         if view != self.view {
             return Ok(());
         }
@@ -116,7 +116,7 @@ impl Core {
     }
 
     pub async fn send_prepare_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
-        debug!("Sending PrepareVote message");
+        info!("Sending PrepareVote message");
         
         // Create the prepare vote message with signature service
         let prepare_vote_message = ConsensusMessage::new(

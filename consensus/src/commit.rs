@@ -27,7 +27,7 @@ impl Core {
     }
 
     pub async fn send_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
-        debug!("Sending Commit Vote message");
+        info!("Sending Commit Vote message");
         let commit_vote_message = ConsensusMessage::new(
             ConsensusMessageType::Commit,
             self.name,
