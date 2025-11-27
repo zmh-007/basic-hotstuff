@@ -3,14 +3,14 @@ use crate::config::{Committee, ConfigError, Parameters, Secret};
 use log::{info};
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
-use crypto::{Digest, SignatureService};
+use crypto::SignatureService;
 use consensus::Consensus;
 
 /// The default channel capacity for this module.
 pub const CHANNEL_CAPACITY: usize = 1_000;
 
 pub struct Node {
-    pub commit: Receiver<Digest>,
+    pub commit: Receiver<String>,
 }
 
 impl Node {

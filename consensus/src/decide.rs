@@ -1,19 +1,22 @@
 use crypto::{PublicKey};
-use log::{info, warn};
+use log::{info, error};
 use tokio::time;
 use crate::{QuorumCert, consensus::{ConsensusMessageType, View}, core::Core, error::ConsensusResult, timer::Timer};
 
 
 impl Core {
-    pub async fn handle_decide(&mut self, _: PublicKey, view: View, commit_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_decide(&mut self, _: PublicKey, view: View, commit_qc: QuorumCert, wp_blk: String) -> ConsensusResult<()> {
         info!("Received Decide for view {:?}", view);
         if commit_qc.qc_type != ConsensusMessageType::Commit {
-            warn!("Received decide with invalid QC type: {:?}", commit_qc.qc_type);
+            error!("Received decide with invalid QC type: {:?}", commit_qc.qc_type);
             return Ok(());
         }
         commit_qc.verify(&self.committee)?;
-        if let Err(e) = self.tx_commit.send(commit_qc.node_digest.clone()).await {
-            warn!("Failed to send block through the commit channel: {}", e);
+        if let Err(e) = self.tx_commit.send(wp_blk.clone()).await {
+            error!("Failed to send block through the commit channel: {}", e);
+        }
+        if let Err(e) = self.replica_client.finalize_block(wp_blk.clone()).await {
+            error!("Failed to finalize blk: {:?}", e);
         }
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;

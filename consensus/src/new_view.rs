@@ -2,7 +2,7 @@ use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Q
 use crate::core::Core;
 use crate::error::ConsensusResult;
 use crypto::{PublicKey};
-use log::{debug, info, warn};
+use log::{debug, info, error};
 use crate::{ConsensusError};
 
 impl Core {
@@ -44,15 +44,15 @@ impl Core {
     pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received NewView for view {:?} from {:?}", view, author);
         if view != self.view {
-            warn!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
+            error!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
         if !self.check_is_leader(&view) {
-            warn!("Received NewView for view {:?}, but {:?} not the leader", view, self.name);
+            error!("Received NewView for view {:?}, but {:?} not the leader", view, self.name);
             return Ok(());
         }
         if prepare_qc.qc_type != ConsensusMessageType::Prepare {
-            warn!("Received NewView with invalid QC type: {:?}", prepare_qc.qc_type);
+            error!("Received NewView with invalid QC type: {:?}", prepare_qc.qc_type);
             return Ok(());
         }
         if prepare_qc != QuorumCert::default() {

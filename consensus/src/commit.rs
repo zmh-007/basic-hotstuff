@@ -1,5 +1,5 @@
 use crypto::{Digest, PublicKey};
-use log::{debug, info, warn};
+use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 
 
@@ -7,15 +7,15 @@ impl Core {
     pub async fn handle_commit(&mut self, _: PublicKey, view: View, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received Commit for view {:?}", view);
         if view != self.view {
-            warn!("Received Commit for view {:?}, but current view is {:?}", view, self.view);
+            error!("Received Commit for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
         if pre_commit_qc.qc_type != ConsensusMessageType::PreCommit {
-            warn!("Received Commit with invalid QC type: {:?}", pre_commit_qc.qc_type);
+            error!("Received Commit with invalid QC type: {:?}", pre_commit_qc.qc_type);
             return Ok(());
         }
         if !self.check_node(&pre_commit_qc.node_digest) {
-            warn!("Received commit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
+            error!("Received commit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
                   view, pre_commit_qc.node_digest, self.voted_node.digest());
             return Ok(());
         }

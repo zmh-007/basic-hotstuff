@@ -7,9 +7,10 @@ use l0::Blk;
 use libp2p::PeerId;
 use log::{error, info};
 use network::P2pLibp2p;
+use replica::replica::ReplicaClient;
 use serde::{Deserialize, Serialize};
 use zk::{AsBytes, ToHash, Fr};
-use std::{collections::HashSet};
+use std::{collections::HashSet, sync::Arc};
 use store::Store;
 use tokio::sync::mpsc::Sender;
 use crate::utils::verify_signature;
@@ -266,7 +267,7 @@ impl Consensus {
         parameters: Parameters,
         signature_service: SignatureService,
         store: Store,
-        tx_commit: Sender<Digest>,
+        tx_commit: Sender<String>,
     ) { 
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<(PeerId, ConsensusMessage)>();
 
@@ -297,6 +298,7 @@ impl Consensus {
             // Make the leader election module.
             let leader_elector = LeaderElector::new(committee.clone());
 
+            let replica_client = ReplicaClient::new(env_var_or("REPLICA_ADDRESS", "http://localhost:8080".to_string()));
             // Start the consensus core
             Core::spawn(
                 name,
@@ -308,9 +310,14 @@ impl Consensus {
                 /* rx_message */ msg_rx,
                 p2p,
                 tx_commit,
+                Arc::new(replica_client),
             );
         });
     }
+}
+
+fn env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
 
 #[cfg(test)]

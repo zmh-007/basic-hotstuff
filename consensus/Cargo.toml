@@ -22,3 +22,4 @@ libp2p = { version = "0.54", default-features = false }
 store = { path = "../store" }
 crypto = { path = "../crypto" }
 network = { path = "../network" }
+replica = { path = "../replica" }

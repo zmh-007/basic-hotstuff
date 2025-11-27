@@ -1,5 +1,5 @@
 [workspace]
-members = ["store", "crypto", "network", "consensus", "node"]
+members = ["store", "crypto", "network", "consensus", "node", "replica"]
 
 [workspace.package]
 edition = "2024"

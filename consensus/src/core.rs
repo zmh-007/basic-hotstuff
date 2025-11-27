@@ -9,8 +9,10 @@ use libp2p::PeerId;
 use log::{error, warn, info};
 use async_recursion::async_recursion;
 use network::P2pLibp2p;
+use replica::replica::ReplicaClientApi;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
+use std::sync::Arc;
 
 pub struct Core {
     pub name: PublicKey,
@@ -20,10 +22,11 @@ pub struct Core {
     pub signature_service: SignatureService,
     pub leader_elector: LeaderElector,
     pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
-    pub tx_commit: Sender<Digest>,
+    pub tx_commit: Sender<String>,
     pub timer: Timer,
     pub network: P2pLibp2p,
     pub aggregator: Aggregator,
+    pub replica_client: Arc<dyn ReplicaClientApi>,
 
     // state variables
     pub view: View,
@@ -47,7 +50,8 @@ impl Core {
         parameters: Parameters,
         msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
         network: P2pLibp2p,
-        tx_commit: Sender<Digest>,
+        tx_commit: Sender<String>,
+        replica_client: Arc<dyn ReplicaClientApi>,
     ) {
         tokio::spawn(async move {     
             let mut core = Self {
@@ -62,6 +66,7 @@ impl Core {
                 timer: Timer::new(parameters.timeout_delay),
                 network,
                 aggregator: Aggregator::new(committee),
+                replica_client,
 
                 view: View::default(),
                 voted_node: Node::default(),
@@ -125,8 +130,8 @@ impl Core {
             (crate::consensus::ConsensusMessageType::Commit, MessagePayload::Commit(qc)) => {
                 self.handle_commit(message.author, message.view, qc.clone()).await
             },
-            (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc, _)) => {
-                self.handle_decide(message.author, message.view, qc.clone()).await
+            (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
+                self.handle_decide(message.author, message.view, qc.clone(), wp_blk.to_string()).await
             },
             _ => {
                 error!("Mismatched message type {:?} and payload", message.msg_type);
@@ -137,7 +142,14 @@ impl Core {
 
     #[async_recursion]
     pub async fn start_new_round(&mut self, round: u64) {
+        // get proposal from replica to get height
+        let height = match self.fetch_and_parse_proposal().await {
+            Some((_, height)) => height,
+            None => return,
+        };
+
         self.view.round = round;
+        self.view.height = height;
         self.voted_node = Node::default();
         self.timer.reset();
         info!("Starting new view {:?}", self.view);
