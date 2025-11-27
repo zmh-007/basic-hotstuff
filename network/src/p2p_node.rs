@@ -7,6 +7,7 @@ use libp2p::{
 };
 use log::{info, warn, debug};
 use std::time::Duration;
+use std::collections::HashSet;
 use tokio::sync::mpsc;
 use crate::error::{P2pError, P2pResult};
 use crate::msg_protocol::{MsgEvent, MsgProtocol};
@@ -62,6 +63,7 @@ enum NodeCommand {
 struct State {
     local_peer_id: PeerId,
     command_tx: mpsc::UnboundedSender<NodeCommand>,
+    connected_leaders: std::sync::Arc<std::sync::Mutex<HashSet<PeerId>>>,
 }
 
 pub struct P2pLibp2p {
@@ -86,10 +88,15 @@ impl P2pLibp2p {
         info!("Using peer ID: {}", local_peer_id);
 
         let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let connected_leaders = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
 
-        self.state = Some(State { local_peer_id, command_tx });
+        self.state = Some(State { 
+            local_peer_id, 
+            command_tx,
+            connected_leaders: connected_leaders.clone(),
+        });
 
-        self.spawn_event_loop(keypair, command_rx, on_msg);
+        self.spawn_event_loop(keypair, command_rx, on_msg, connected_leaders);
         Ok(())
     }
 
@@ -118,6 +125,24 @@ impl P2pLibp2p {
         self.state.is_some()
     }
 
+    pub fn has_leader_connection(&self) -> bool {
+        if let Some(ref state) = self.state {
+            let connected_leaders = state.connected_leaders.lock().unwrap();
+            !connected_leaders.is_empty()
+        } else {
+            false
+        }
+    }
+
+    pub fn connected_leader_count(&self) -> usize {
+        if let Some(ref state) = self.state {
+            let connected_leaders = state.connected_leaders.lock().unwrap();
+            connected_leaders.len()
+        } else {
+            0
+        }
+    }
+
     fn create_keypair(&self) -> P2pResult<identity::Keypair> {
         if let Some(ref private_key_b64) = self.config.private_key {
             let private_key_bytes = general_purpose::STANDARD.decode(private_key_b64)
@@ -137,9 +162,12 @@ impl P2pLibp2p {
     fn spawn_event_loop(
         &self, keypair: identity::Keypair, mut command_rx: mpsc::UnboundedReceiver<NodeCommand>,
         on_msg: impl Fn(PeerId, Vec<u8>) + Send + Sync + 'static,
+        connected_leaders: std::sync::Arc<std::sync::Mutex<HashSet<PeerId>>>,
     ) {
         let config = self.config.clone();
 
+        let leader_peer_ids = Self::extract_leader_peer_ids(&config.leader_nodes);
+        
         tokio::spawn(async move {
             let mut swarm = Self::build_swarm(keypair, &config, on_msg).await;
             Self::connect_to_leader_nodes(&mut swarm, &config.leader_nodes).await;
@@ -176,6 +204,8 @@ impl P2pLibp2p {
                         Self::handle_swarm_event(
                             &mut swarm,
                             swarm_event,
+                            &leader_peer_ids,
+                            &connected_leaders,
                         ).await;
                     }
                 }
@@ -183,6 +213,15 @@ impl P2pLibp2p {
         });
     }
     
+    fn extract_leader_peer_ids(leader_nodes: &[String]) -> HashSet<PeerId> {
+        leader_nodes.iter()
+            .filter_map(|addr_str| {
+                addr_str.parse::<Multiaddr>().ok()
+                    .and_then(|addr| extract_peer_id(&addr))
+            })
+            .collect()
+    }
+
     async fn build_swarm(keypair: identity::Keypair, config: &P2pConfig, on_msg: impl Fn(PeerId, Vec<u8>) + Send + Sync + 'static) -> libp2p::Swarm<P2pBehaviour> {
         libp2p::SwarmBuilder::with_existing_identity(keypair)
             .with_tokio()
@@ -251,16 +290,35 @@ impl P2pLibp2p {
         }
     }
 
-    async fn handle_swarm_event(_swarm: &mut libp2p::Swarm<P2pBehaviour>, event: SwarmEvent<P2pBehaviourEvent>) {
+    async fn handle_swarm_event(
+        _swarm: &mut libp2p::Swarm<P2pBehaviour>, 
+        event: SwarmEvent<P2pBehaviourEvent>,
+        leader_peer_ids: &HashSet<PeerId>,
+        connected_leaders: &std::sync::Arc<std::sync::Mutex<HashSet<PeerId>>>,
+    ) {
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 info!("Listening on {:?}", address);
             }
             SwarmEvent::ConnectionEstablished { peer_id, .. } => {
                 info!("Connected to peer: {}", peer_id);
+                
+                // Check if this is a leader node
+                if leader_peer_ids.contains(&peer_id) {
+                    let mut leaders = connected_leaders.lock().unwrap();
+                    leaders.insert(peer_id);
+                    info!("Connected to leader node: {} (total leaders: {})", peer_id, leaders.len());
+                }
             }
             SwarmEvent::ConnectionClosed { peer_id, .. } => {
                 info!("Disconnected from peer: {}", peer_id);
+                
+                // Check if this was a leader node
+                if leader_peer_ids.contains(&peer_id) {
+                    let mut leaders = connected_leaders.lock().unwrap();
+                    leaders.remove(&peer_id);
+                    info!("Disconnected from leader node: {} (remaining leaders: {})", peer_id, leaders.len());
+                }
             }
             SwarmEvent::Behaviour(P2pBehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                 debug!("Identified peer {} with {} addresses", peer_id, info.listen_addrs.len());

@@ -270,7 +270,7 @@ impl Consensus {
     ) { 
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<(PeerId, ConsensusMessage)>();
 
-        // Spawn the network receiver.
+        // Create and initialize the P2P network
         let mut p2p = P2pLibp2p::default();
         p2p.init(move |id, payload: Vec<u8>| {
             let msg: ConsensusMessage = bincode::deserialize(&payload)
@@ -281,21 +281,35 @@ impl Consensus {
         }).expect("failed to initialize p2p node");
         info!("Local peer ID: {}", p2p.local_peer_id());
 
-        // Make the leader election module.
-        let leader_elector = LeaderElector::new(committee.clone());
+        // Wait for leader connection before starting consensus core
+        tokio::spawn(async move {
+            info!("Waiting for leader connection...");
+            
+            // Poll the P2P state until we have at least one leader connection
+            loop {
+                if p2p.has_leader_connection() {
+                    info!("Connected to {} leader(s), starting consensus core...", p2p.connected_leader_count());
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
 
-        // Spawn the consensus core.
-        Core::spawn(
-            name,
-            committee.clone(),
-            signature_service.clone(),
-            leader_elector,
-            store.clone(),
-            parameters,
-            /* rx_message */ msg_rx,
-            p2p,
-            tx_commit,
-        );
+            // Make the leader election module.
+            let leader_elector = LeaderElector::new(committee.clone());
+
+            // Start the consensus core
+            Core::spawn(
+                name,
+                committee.clone(),
+                signature_service.clone(),
+                leader_elector,
+                store.clone(),
+                parameters,
+                /* rx_message */ msg_rx,
+                p2p,
+                tx_commit,
+            );
+        });
     }
 }
 
