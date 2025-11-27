@@ -4,7 +4,7 @@ use crate::timer::Timer;
 use crate::{LeaderElector, Parameters};
 use crate::config::Committee;
 use crate::consensus::{ConsensusMessage, MessagePayload, Node, QuorumCert, View};
-use crypto::{Digest, PublicKey, SignatureService};
+use crypto::{PublicKey, SignatureService};
 use libp2p::PeerId;
 use log::{error, warn, info};
 use async_recursion::async_recursion;
