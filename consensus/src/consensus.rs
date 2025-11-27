@@ -235,10 +235,11 @@ impl QuorumCert {
             used.insert(*name);
             weight += voting_rights;
         }
-        crate::ensure!(
-            weight >= committee.quorum_threshold(),
-            ConsensusError::QCRequiresQuorum
-        );
+        if weight < committee.quorum_threshold() {
+            error!("QC requires quorum: weight={}, required={}, public_keys={:?}", 
+                   weight, committee.quorum_threshold(), self.public_keys);
+            return Err(ConsensusError::QCRequiresQuorum);
+        }
 
         // Check the aggregated pk
         let mut public_keys = Vec::with_capacity(self.public_keys.len());
