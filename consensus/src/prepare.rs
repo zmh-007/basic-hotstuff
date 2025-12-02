@@ -98,6 +98,7 @@ impl Core {
         
         // Record vote and send prepare vote
         self.voted_node = node.clone();
+        self.persist_voted_node().await;
         self.send_prepare_vote(node.digest()).await
     }
 

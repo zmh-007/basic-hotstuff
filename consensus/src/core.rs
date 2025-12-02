@@ -86,6 +86,9 @@ impl Core {
                 consecutive_timeouts: 0,
             };
             
+            // Restore persistent state from storage
+            core.restore_persistent_state().await;
+            
             core.run().await;
         });
     }
@@ -169,6 +172,7 @@ impl Core {
         // Update view state
         self.view = View { height, round };
         self.voted_node = Node::default();
+        self.persist_voted_node().await;
         self.timer.reset();
         
         info!("Starting new view: {}", self.view);
@@ -204,5 +208,60 @@ impl Core {
         let backoff_multiplier = 2_u64.saturating_pow((self.consecutive_timeouts - 1) as u32);
         
         self.parameters.timeout_delay.saturating_mul(backoff_multiplier)
+    }
+    
+    // Persistence methods
+    async fn restore_persistent_state(&mut self) {
+        // Restore voted_node
+        if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
+            if let Ok(voted_node) = bincode::deserialize::<Node>(&voted_node_bytes) {
+                self.voted_node = voted_node;
+                info!("Restored voted_node: {}", self.voted_node.digest());
+            }
+        }
+        
+        // Restore prepare_qc
+        if let Ok(Some(prepare_qc_bytes)) = self.store.read_prepare_qc().await {
+            if let Ok(prepare_qc) = bincode::deserialize::<QuorumCert>(&prepare_qc_bytes) {
+                self.prepare_qc = prepare_qc;
+                info!("Restored prepare_qc for view: {}", self.prepare_qc.view);
+            }
+        }
+        
+        // Restore lock_qc
+        if let Ok(Some(lock_qc_bytes)) = self.store.read_lock_qc().await {
+            if let Ok(lock_qc) = bincode::deserialize::<QuorumCert>(&lock_qc_bytes) {
+                self.lock_qc = lock_qc;
+                info!("Restored lock_qc for view: {}", self.lock_qc.view);
+            }
+        }
+        
+        // Restore lock_blob
+        if let Ok(Some(lock_blob)) = self.store.read_lock_blob().await {
+            self.lock_blob = lock_blob;
+            info!("Restored lock_blob: {} chars", self.lock_blob.len());
+        }
+    }
+    
+    pub async fn persist_voted_node(&mut self) {
+        if let Ok(bytes) = bincode::serialize(&self.voted_node) {
+            self.store.write_voted_node(bytes).await;
+        }
+    }
+    
+    pub async fn persist_prepare_qc(&mut self) {
+        if let Ok(bytes) = bincode::serialize(&self.prepare_qc) {
+            self.store.write_prepare_qc(bytes).await;
+        }
+    }
+    
+    pub async fn persist_lock_qc(&mut self) {
+        if let Ok(bytes) = bincode::serialize(&self.lock_qc) {
+            self.store.write_lock_qc(bytes).await;
+        }
+    }
+    
+    pub async fn persist_lock_blob(&mut self) {
+        self.store.write_lock_blob(self.lock_blob.clone()).await;
     }
 }

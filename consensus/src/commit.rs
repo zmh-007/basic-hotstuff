@@ -20,7 +20,7 @@ impl Core {
             return Ok(());
         }
         pre_commit_qc.verify(&self.committee)?;
-        self.lock_qc_and_blob(pre_commit_qc.clone());
+        self.lock_qc_and_blob(pre_commit_qc.clone()).await;
 
         self.send_commit_vote(pre_commit_qc.node_digest.clone()).await?;
         Ok(())
@@ -51,8 +51,10 @@ impl Core {
         Ok(())
     }
 
-    fn lock_qc_and_blob(&mut self, qc: QuorumCert) {
+    async fn lock_qc_and_blob(&mut self, qc: QuorumCert) {
         self.lock_qc = qc.clone();
         self.lock_blob = self.voted_node.blob.clone();
+        self.persist_lock_qc().await;
+        self.persist_lock_blob().await;
     }
 }

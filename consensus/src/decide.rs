@@ -21,7 +21,7 @@ impl Core {
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
         self.aggregator.cleanup();
-        self.unlock_blob();
+        self.unlock_blob().await;
         self.view.height = commit_qc.view.height + 1;
         self.consecutive_timeouts = 0;
         // Reset timer to original timeout
@@ -30,7 +30,8 @@ impl Core {
         Ok(())
     }
 
-    fn unlock_blob(&mut self) {
+    async fn unlock_blob(&mut self) {
         self.lock_blob = String::new();
+        self.persist_lock_blob().await;
     }
 }

@@ -21,6 +21,7 @@ impl Core {
         }
         prepare_qc.verify(&self.committee)?;
         self.prepare_qc = prepare_qc.clone();
+        self.persist_prepare_qc().await;
         self.send_pre_commit_vote(prepare_qc.node_digest.clone()).await?;
 
         Ok(())
