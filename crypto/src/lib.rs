@@ -1,13 +1,17 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
-use rand::{RngCore};
-use zk::{AsBytes, Fr, ToHash};
-use std::fmt;
-use base64::{Engine as _, engine::general_purpose};
-use tokio::sync::mpsc::{channel, Sender};
-use tokio::sync::oneshot;
-use serde::{ser, de, Serialize, Deserialize};
+
+// Standard library imports
 use std::array::TryFromSliceError;
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
+
+// External crate imports
+use base64::{Engine as _, engine::general_purpose};
+use rand::RngCore;
+use serde::{de, ser, Deserialize, Serialize};
+use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::oneshot;
+use zk::{AsBytes, Fr, ToHash};
 
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
@@ -27,7 +31,8 @@ impl Digest {
     }
 
     pub fn to_field(&self) -> Fr {
-        Fr::dec(&mut self.to_vec().into_iter()).expect("Failed to convert Digest to Fr")
+        Fr::dec(&mut self.to_vec().into_iter())
+            .expect("Digest bytes should always be valid for Fr conversion")
     }
 }
 
@@ -71,20 +76,32 @@ impl PublicKey {
     }
 
     pub fn decode_base64(s: &str) -> Result<Self, base64::DecodeError> {
+        const EXPECTED_LEN: usize = 48;
         let bytes = general_purpose::STANDARD.decode(s)?;
-        let array = bytes[..48]
-            .try_into()
-            .map_err(|_| base64::DecodeError::InvalidLength)?;
+        
+        if bytes.len() != EXPECTED_LEN {
+            return Err(base64::DecodeError::InvalidLength);
+        }
+        
+        let array = bytes.try_into().map_err(|_| base64::DecodeError::InvalidLength)?;
         Ok(Self(array))
     }
 
     pub fn to_hash(&self) -> Fr {
+        const CHUNK_SIZE: usize = 24;
+        const OFFSET: usize = 8;
+        
         let mut chunk1 = [0u8; 32];
         let mut chunk2 = [0u8; 32];
-        chunk1[8..].copy_from_slice(&self.0[..24]);
-        chunk2[8..].copy_from_slice(&self.0[24..]);
-        let fr1 = Fr::dec(&mut chunk1.to_vec().into_iter()).expect("Failed to convert PublicKey to Fr");
-        let fr2 = Fr::dec(&mut chunk2.to_vec().into_iter()).expect("Failed to convert PublicKey to Fr");
+        
+        chunk1[OFFSET..].copy_from_slice(&self.0[..CHUNK_SIZE]);
+        chunk2[OFFSET..].copy_from_slice(&self.0[CHUNK_SIZE..]);
+        
+        let fr1 = Fr::dec(&mut chunk1.to_vec().into_iter())
+            .expect("PublicKey chunk1 should be valid for Fr conversion");
+        let fr2 = Fr::dec(&mut chunk2.to_vec().into_iter())
+            .expect("PublicKey chunk2 should be valid for Fr conversion");
+            
         (fr1, fr2).hash()
     }
 }
@@ -142,10 +159,14 @@ impl SecretKey {
     }
 
     pub fn decode_base64(s: &str) -> Result<Self, base64::DecodeError> {
+        const EXPECTED_LEN: usize = 32;
         let bytes = general_purpose::STANDARD.decode(s)?;
-        let array = bytes[..32]
-            .try_into()
-            .map_err(|_| base64::DecodeError::InvalidLength)?;
+        
+        if bytes.len() != EXPECTED_LEN {
+            return Err(base64::DecodeError::InvalidLength);
+        }
+        
+        let array = bytes.try_into().map_err(|_| base64::DecodeError::InvalidLength)?;
         Ok(Self(array))
     }
 }
@@ -179,10 +200,14 @@ impl Signature {
     }
 
     pub fn decode_base64(s: &str) -> Result<Self, base64::DecodeError> {
+        const EXPECTED_LEN: usize = 96;
         let bytes = general_purpose::STANDARD.decode(s)?;
-        let array = bytes[..96]
-            .try_into()
-            .map_err(|_| base64::DecodeError::InvalidLength)?;
+        
+        if bytes.len() != EXPECTED_LEN {
+            return Err(base64::DecodeError::InvalidLength);
+        }
+        
+        let array = bytes.try_into().map_err(|_| base64::DecodeError::InvalidLength)?;
         Ok(Self(array))
     }
 }
@@ -213,14 +238,17 @@ impl Default for Signature {
     }
 }
 
+/// Generates a new production-ready keypair using cryptographically secure random generation
 pub fn generate_production_keypair() -> (PublicKey, SecretKey) {
-    // gen rand sk
+    const IKM_LEN: usize = 32;
+    
     let mut rng = rand::thread_rng();
-    let mut ikm = [0u8; 32];
+    let mut ikm = [0u8; IKM_LEN];
     rng.fill_bytes(&mut ikm);
-    let sk = blst::min_pk::SecretKey::key_gen(&ikm, &[]).unwrap();
-
-    // calculate pk
+    
+    let sk = blst::min_pk::SecretKey::key_gen(&ikm, &[])
+        .expect("Key generation should always succeed with valid IKM");
+    
     let pk = sk.sk_to_pk();
     (PublicKey(pk.to_bytes()), SecretKey(sk.to_bytes()))
 }
@@ -234,25 +262,35 @@ pub struct SignatureService {
 
 impl SignatureService {
     pub fn new(secret: SecretKey) -> Self {
-        let (tx, mut rx): (Sender<(Digest, oneshot::Sender<Signature>)>, _) = channel(100);
+        const CHANNEL_BUFFER: usize = 100;
+        const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+        
+        let (tx, mut rx): (Sender<(Digest, oneshot::Sender<Signature>)>, _) = channel(CHANNEL_BUFFER);
+        
         tokio::spawn(async move {
+            let sk = blst::min_pk::SecretKey::from_bytes(&secret.0)
+                .expect("SecretKey bytes should be valid for BLS key construction");
+                
             while let Some((digest, sender)) = rx.recv().await {
-                let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-                let sk = blst::min_pk::SecretKey::from_bytes(&secret.0).unwrap();
-                let signature = sk.sign(&digest.to_vec(), dst, &[]);
+                let signature = sk.sign(&digest.to_vec(), BLS_DST, &[]);
+                // Ignore send error as receiver might have dropped
                 let _ = sender.send(Signature(signature.to_bytes()));
             }
         });
+        
         Self { channel: tx }
     }
 
     pub async fn request_signature(&mut self, digest: Digest) -> Signature {
-        let (sender, receiver): (oneshot::Sender<_>, oneshot::Receiver<_>) = oneshot::channel();
-        if let Err(e) = self.channel.send((digest, sender)).await {
-            panic!("Failed to send message Signature Service: {}", e);
-        }
+        let (sender, receiver) = oneshot::channel();
+        
+        self.channel
+            .send((digest, sender))
+            .await
+            .expect("SignatureService should be running");
+            
         receiver
             .await
-            .expect("Failed to receive signature from Signature Service")
+            .expect("Signature should be generated successfully")
     }
 }

@@ -1,94 +1,104 @@
-use crate::consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Node, QuorumCert, View};
-use crate::core::Core;
-use crate::error::ConsensusResult;
+use crate::{
+    consensus::{ConsensusMessage, ConsensusMessageType, MessagePayload, Node, QuorumCert, View},
+    core::Core,
+    error::{ConsensusError, ConsensusResult},
+};
 use crypto::{Digest, PublicKey};
-use log::{debug, info, error};
-use crate::ConsensusError;
+use log::{debug, error, info, warn};
 
 impl Core {
     /// Send Prepare message with current PrepareQC
     pub async fn send_prepare(&mut self, high_qc: QuorumCert) -> ConsensusResult<()> {
-        info!("Sending Prepare message");
+        info!("Sending Prepare message for view {}", self.view);
+        
+        // Verify leadership
         if !self.check_is_leader(&self.view) {
-            error!("Not the leader for view {:?}, cannot send Prepare message", self.view);
+            warn!("Cannot send Prepare message - not the leader for view {}", self.view);
             return Ok(());
         }
         
-        // check if blob is locked, else get proposal from replica
-        let blob = if self.lock_blob != String::new() {
+        // Get blob - use locked blob or fetch new proposal
+        let blob = if !self.lock_blob.is_empty() {
+            info!("Using locked blob for Prepare message");
             self.lock_blob.clone()
         } else {
-            // get proposal from replica
             match self.fetch_and_parse_proposal().await {
                 Some((blk, _)) => blk,
-                None => return Ok(()),
+                None => {
+                    error!("Failed to get proposal for Prepare message");
+                    return Ok(());
+                }
             }
         };
 
-        let parent = high_qc.node_digest.clone();
-        let node = Node::new(parent, blob);
-
-        // Create the prepare message with signature service
+        // Create node and prepare message
+        let node = Node::new(high_qc.node_digest, blob);
         let prepare_message = ConsensusMessage::new(
             ConsensusMessageType::Prepare,
             self.name,
-            self.view.clone(), 
+            self.view.clone(),
             MessagePayload::Prepare(node.clone(), high_qc.clone()),
             self.signature_service.clone(),
         ).await;
 
-       // Serialize the message
-        match bincode::serialize(&prepare_message) {
-            Ok(payload) => {
-                // broadcast the message
-                debug!("Broadcast {:?}", prepare_message);
-                self.network.send(None, payload)?;
-                debug!("Prepare message broadcast successfully");
-                self.handle_prepare(self.name, self.view.clone(), node, high_qc).await?;
-            }
-            Err(e) => {
-                return Err(ConsensusError::SerializationError(e));
-            }
-        }
-        Ok(())
+        // Broadcast message
+        let payload = bincode::serialize(&prepare_message)
+            .map_err(ConsensusError::SerializationError)?;
+            
+        debug!("Broadcasting Prepare message for view {}", self.view);
+        self.network.send(None, payload)?;
+        
+        // Handle our own prepare message
+        self.handle_prepare(self.name, self.view.clone(), node, high_qc).await
     }
 
-    pub async fn handle_prepare(&mut self, _: PublicKey, view: View, node: Node, high_qc: QuorumCert) -> ConsensusResult<()> {
-        info!("Received prepare for view {:?}", view);
+    pub async fn handle_prepare(
+        &mut self,
+        _author: PublicKey,
+        view: View,
+        node: Node,
+        high_qc: QuorumCert,
+    ) -> ConsensusResult<()> {
+        info!("Received Prepare for view {}", view);
+        
+        // Basic validations
         if view != self.view {
+            debug!("Ignoring Prepare for view {} (current: {})", view, self.view);
             return Ok(());
         }
+        
         if high_qc.qc_type != ConsensusMessageType::Prepare {
-            error!("Received prepare with invalid QC type: {:?}", high_qc.qc_type);
+            error!("Invalid QC type in Prepare: {:?}", high_qc.qc_type);
             return Ok(());
         }
+        
+        if self.voted_node != Node::default() {
+            warn!(
+                "Already voted for view {} (node: {}), ignoring new Prepare (node: {})",
+                view, self.voted_node.digest(), node.digest()
+            );
+            return Ok(());
+        }
+
+        // Verify QC if not default (genesis)
         if high_qc != QuorumCert::default() {
             high_qc.verify(&self.committee)?;
         }
-        if self.voted_node != Node::default() {
-            error!("Received prepare for view {:?}, but node digest {:?} is voted already to digest {:?}", 
-                  view, node.digest(), self.voted_node.digest());
+
+        // Verify proposal from replica
+        if let Err(error) = self.replica_client.verify_proposal(node.blob.clone()).await {
+            error!("Proposal verification failed: {:?}", error);
             return Ok(());
         }
+        info!("Proposal verification successful");
 
-        // verify proposal from replica
-        match self.replica_client.verify_proposal(node.blob.clone()).await {
-            Ok(_) => {
-                info!("Success verify proposal");
-            }
-            Err(error) => {
-                error!("failed to verify proposal: {:?}", error);
-                return Ok(());
-            }
-        }
-
-        // safety and liveness rules
+        // Apply safety and liveness rules
         self.extend(&node, &high_qc)?;
         self.safe_node(&node, &high_qc)?;
+        
+        // Record vote and send prepare vote
         self.voted_node = node.clone();
-
-        self.send_prepare_vote(node.digest()).await?;
-        Ok(())
+        self.send_prepare_vote(node.digest()).await
     }
 
     fn extend(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {        
@@ -102,28 +112,33 @@ impl Core {
     }
 
     fn safe_node(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {
-        let lock_qc = self.lock_qc.clone();
-        
-        // Skip genesis block
-        if lock_qc == QuorumCert::default() {
-            info!("LockQC is default - should only happen at startup");
+        // Genesis case - no safety check needed
+        if self.lock_qc == QuorumCert::default() {
+            debug!("No lock QC (genesis), node is safe");
             return Ok(());
         }
 
-        // Check safety conditions:
+        let high_view = (high_qc.view.height, high_qc.view.round);
+        let lock_view = (self.lock_qc.view.height, self.lock_qc.view.round);
+        
+        // Safety conditions (either must be true):
         // 1. highQC.view > lockQC.view OR
         // 2. node extends lockQC (node's parent equals lockQC's node)
-        if (high_qc.view.height, high_qc.view.round) > (lock_qc.view.height, lock_qc.view.round) {
-            return Ok(());
+        let higher_view = high_view > lock_view;
+        let extends_lock = node.parent == self.lock_qc.node_digest;
+        
+        if higher_view {
+            debug!("Node is safe: higher view ({:?} > {:?})", high_view, lock_view);
+            Ok(())
+        } else if extends_lock {
+            debug!("Node is safe: extends locked node");
+            Ok(())
+        } else {
+            Err(ConsensusError::SafeNodeViolation(format!(
+                "Node safety violation: highQC view {:?} <= lockQC view {:?} and node doesn't extend lockQC",
+                high_qc.view, self.lock_qc.view
+            )))
         }
-        if node.parent == lock_qc.node_digest {
-            return Ok(());
-        }
-
-        Err(ConsensusError::SafeNodeViolation(
-            format!("Node is not safe: highQC.view {} <= lockQC.view {} and node doesn't extend lockQC", 
-                   high_qc.view, lock_qc.view)
-        ))
     }
 
     pub async fn send_prepare_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {

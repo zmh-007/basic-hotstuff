@@ -1,10 +1,14 @@
+// Internal modules
 mod config;
 mod node;
 
-use crate::node::Node;
+// External crate imports
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use log::error;
+
+// Internal imports
+use crate::node::Node;
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -59,7 +63,8 @@ async fn main() {
     match cli.command {
         Command::Keys { filename } => {
             if let Err(e) = Node::print_key_file(&filename) {
-                error!("{}", e);
+                error!("Failed to generate keys: {}", e);
+                std::process::exit(1);
             }
         }
         Command::Run {
@@ -67,11 +72,16 @@ async fn main() {
             committee,
             parameters,
             store,
-        } => match Node::new(&committee, &keys, &store, parameters).await {
-            Ok(mut node) => {
-                node.start().await;
+        } => {
+            match Node::new(&committee, &keys, &store, parameters).await {
+                Ok(mut node) => {
+                    node.start().await;
+                }
+                Err(e) => {
+                    error!("Failed to start node: {}", e);
+                    std::process::exit(1);
+                }
             }
-            Err(e) => error!("{}", e),
-        },
+        }
     }
 }

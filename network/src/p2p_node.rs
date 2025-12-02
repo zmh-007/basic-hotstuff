@@ -32,8 +32,16 @@ pub struct P2pConfig {
 
 impl Default for P2pConfig {
     fn default() -> Self {
+        let leader_nodes = env_var_or("LEADER_NODES", String::new())
+            .split(',')
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            })
+            .collect();
+            
         Self {
-            leader_nodes: env_var_or("LEADER_NODES", String::new()).split(',').filter(|s| !s.is_empty()).map(|s| s.trim().to_string()).collect(),
+            leader_nodes,
             min_peers: env_var_or("P2P_MIN_PEERS", 2),
             idle_timeout: Duration::from_secs(env_var_or("P2P_IDLE_TIMEOUT", 600)),
             ping_interval: Duration::from_secs(env_var_or("P2P_PING_INTERVAL", 30)),
@@ -85,13 +93,16 @@ impl P2pLibp2p {
 
         let keypair = self.create_keypair()?;
         let local_peer_id = PeerId::from(keypair.public());
-        info!("Using peer ID: {}", local_peer_id);
-
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let connected_leaders = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
 
-        self.state = Some(State { 
-            local_peer_id, 
+        info!("Initializing P2P node with peer ID: {}", local_peer_id);
+        if !self.config.leader_nodes.is_empty() {
+            info!("Configured leader nodes: {:?}", self.config.leader_nodes);
+        }
+
+        self.state = Some(State {
+            local_peer_id,
             command_tx,
             connected_leaders: connected_leaders.clone(),
         });

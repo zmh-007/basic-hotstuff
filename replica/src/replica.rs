@@ -32,7 +32,7 @@ pub enum ReplicaClientError {
     #[error("Retries limit exceeded when sending message to {url}, attempts: {attempts}, last error: {last_error}")]
     RetriesLimitExceededError {
         url: String,
-        attempts: i32,
+        attempts: u32,
         last_error: Box<ReplicaClientError>,
     },
 }
@@ -71,6 +71,40 @@ impl ReplicaClient {
             replica_address,
             client: reqwest::Client::new(),
         }
+    }
+    
+    fn ensure_hex_prefix(value: String) -> String {
+        if value.starts_with("0x") {
+            value
+        } else {
+            format!("0x{}", value)
+        }
+    }
+    
+    async fn send_rpc_request<T>(&self, method: &str, params: T) -> Result<JsonRpcResponse> 
+    where
+        T: Serialize + Clone + Send + Sync + std::fmt::Debug + 'static,
+    {
+        let method_owned = method.to_string();
+        self.call(
+            params,
+            "",
+            |client, msg, url| {
+                Box::pin(async move {
+                    ReplicaClient::send_with_retries(client, &method_owned, &msg, &url).await
+                })
+            },
+        ).await
+    }
+    
+    fn check_rpc_error(&self, response: &JsonRpcResponse, context: &'static str) -> Result<()> {
+        if !response.error.is_null() {
+            return Err(ReplicaClientError::ResponseError {
+                context,
+                error: format!("RPC error: {}", response.error),
+            });
+        }
+        Ok(())
     }
 
     async fn call<M, F>(&self, msg: M, path: &'static str, call_fn: F) -> Result<JsonRpcResponse>
@@ -121,106 +155,69 @@ impl ReplicaClient {
         }
     }
 
-    async fn send_with_retires<T: Serialize + std::fmt::Debug>(
+    async fn send_with_retries<T: Serialize + std::fmt::Debug>(
         client: reqwest::Client,
         method: &str,
         msg: &T,
         url: &str,
     ) -> Result<JsonRpcResponse> {
-        let mut attempt = 1;
-        let mut backoff = Duration::from_millis(200);
-
-        debug!("attempting to send request to {}, msg: {:?}", url, msg);
-
-        loop {
+        const MAX_RETRIES: u32 = 3;
+        const INITIAL_BACKOFF: Duration = Duration::from_millis(100);
+        
+        debug!("Sending {} request to: {}", method, url);
+        
+        let mut last_error = None;
+        
+        for attempt in 1..=MAX_RETRIES {
             match ReplicaClient::send_msg(&client, method, msg, url).await {
-                Ok(response) => return Ok(response),
-                Err(err) => {
-                    error!("failed to send request to {} (method: {}, attempt: {}): {:?}", url, method, attempt, err);
-
+                Ok(response) => {
                     if attempt > 1 {
-                        return Err(ReplicaClientError::RetriesLimitExceededError {
-                            url: url.to_string(),
-                            attempts: attempt,
-                            last_error: Box::new(err),
-                        });
+                        debug!("Request succeeded on attempt {} to {}", attempt, url);
                     }
-
-                    attempt += 1;
-                    tokio::time::sleep(backoff).await;
-                    backoff *= 2;
+                    return Ok(response);
+                }
+                Err(err) => {
+                    last_error = Some(err);
+                    
+                    if attempt < MAX_RETRIES {
+                        let delay = INITIAL_BACKOFF * 2_u32.pow(attempt - 1);
+                        debug!(
+                            "Request failed (attempt {}/{}), retrying in {}ms: {:?}",
+                            attempt, MAX_RETRIES, delay.as_millis(), last_error
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
                 }
             }
         }
+        
+        Err(ReplicaClientError::RetriesLimitExceededError {
+            url: url.to_string(),
+            attempts: MAX_RETRIES,
+            last_error: Box::new(last_error.unwrap()),
+        })
     }
 }
 
 #[async_trait]
 impl ReplicaClientApi for ReplicaClient {
     async fn get_proposal(&self) -> Result<Value> {
-        let response = self.call(
-            Value::Null,
-            "",
-            |client, msg, url| {
-                Box::pin(async move {
-                    ReplicaClient::send_with_retires(client, "get_proposal_of_next_block", &msg, &url).await
-                })
-            },
-        ).await?;
-        if !response.error.is_null() {
-            return Err(ReplicaClientError::ResponseError {
-                context: "get_proposal failed",
-                error: format!("RPC error: {}", response.error)
-            });
-        }
+        let response = self.send_rpc_request("get_proposal_of_next_block", Value::Null).await?;
+        self.check_rpc_error(&response, "get_proposal")?;
         Ok(response.result)
     }
 
     async fn verify_proposal(&self, msg: String) -> Result<()> {
-        let block = if !msg.starts_with("0x") {
-            format!("0x{}", msg)
-        } else {
-            msg.clone()
-        };
-        let response = self.call(
-            block,
-            "",
-            |client, msg, url| {
-                Box::pin(async move {
-                    ReplicaClient::send_with_retires(client, "verify_proposal_of_next_block", &msg, &url).await
-                })
-            },
-        ).await?;
-         if !response.error.is_null() {
-            return Err(ReplicaClientError::ResponseError {
-                context: "verify_proposal failed",
-                error: format!("RPC error: {}", response.error)
-            });
-        }
+        let block = Self::ensure_hex_prefix(msg);
+        let response = self.send_rpc_request("verify_proposal_of_next_block", block).await?;
+        self.check_rpc_error(&response, "verify_proposal")?;
         Ok(())
     }
 
     async fn finalize_block(&self, wp_blk: String) -> Result<()> {
-        let wp_blk_with_prefix = if !wp_blk.starts_with("0x") {
-            format!("0x{}", wp_blk)
-        } else {
-            wp_blk.clone()
-        };
-        let response = self.call(
-            wp_blk_with_prefix,
-            "",
-            |client, msg, url| {
-                Box::pin(async move {
-                    ReplicaClient::send_with_retires(client, "submit_next_block", &msg, &url).await
-                })
-            },
-        ).await?;
-        if !response.error.is_null() {
-            return Err(ReplicaClientError::ResponseError {
-                context: "finalize_block failed",
-                error: format!("RPC error: {}", response.error)
-            });
-        }
+        let block = Self::ensure_hex_prefix(wp_blk);
+        let response = self.send_rpc_request("submit_next_block", block).await?;
+        self.check_rpc_error(&response, "finalize_block")?;
         Ok(())
     }
 }

@@ -1,5 +1,13 @@
-use crate::{LeaderElector, config::{Committee, Parameters}, core::Core, error::ConsensusResult};
-use crate::ConsensusError;
+// Core consensus imports
+use crate::{
+    config::{Committee, Parameters},
+    core::Core,
+    error::{ConsensusError, ConsensusResult},
+    utils::verify_signature,
+    LeaderElector,
+};
+
+// External crates
 use blst::min_pk::AggregatePublicKey;
 use crypto::{Digest, PublicKey, SignatureService, Signature};
 use hex::decode;
@@ -9,12 +17,10 @@ use log::{error, info};
 use network::P2pLibp2p;
 use replica::replica::ReplicaClient;
 use serde::{Deserialize, Serialize};
-use zk::{AsBytes, ToHash, Fr};
 use std::{collections::HashSet, sync::Arc};
 use store::Store;
-use tokio::sync::mpsc::Sender;
-use crate::utils::verify_signature;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Sender};
+use zk::{AsBytes, Fr, ToHash};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct View {
@@ -88,22 +94,17 @@ pub enum MessagePayload {
 impl MessagePayload {
     pub fn digest(&self) -> Digest {
         match self {
-            MessagePayload::NewView(qc)
-            | MessagePayload::PreCommit(qc)
-            | MessagePayload::Commit(qc) => qc.digest(),
-            MessagePayload::Decide(qc, _) => qc.digest(),
-            MessagePayload::Prepare(node, qc) => {
-                // Combine node and qc digests
-                let elements = vec![
-                    node.digest().to_field(),
-                    qc.digest().to_field(),
-                ];
-                let b: Vec<u8> = elements.hash().enc().collect();
-                Digest(b.try_into().expect("Failed to convert prepare payload hash bytes to digest"))
-            },
-            MessagePayload::PrepareVote(node_digest)
-            | MessagePayload::PreCommitVote(node_digest)
-            | MessagePayload::CommitVote(node_digest) => *node_digest,
+            Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
+                qc.digest()
+            }
+            Self::Prepare(node, qc) => {
+                let elements = vec![node.digest().to_field(), qc.digest().to_field()];
+                let bytes: Vec<u8> = elements.hash().enc().collect();
+                Digest(bytes.try_into().unwrap_or([0u8; 32]))
+            }
+            Self::PrepareVote(digest) | Self::PreCommitVote(digest) | Self::CommitVote(digest) => {
+                *digest
+            }
         }
     }
 }
@@ -124,26 +125,27 @@ impl ConsensusMessage {
             self.view.digest(),
             self.msg.digest().to_field(),
         ];
-        let b: Vec<u8> = elements.hash().enc().collect();
-        Digest(b.try_into().expect("Failed to convert message hash bytes to digest"))
+        let bytes: Vec<u8> = elements.hash().enc().collect();
+        Digest(bytes.try_into().unwrap_or([0u8; 32]))
     }
 
     pub async fn new(
         msg_type: ConsensusMessageType,
         author: PublicKey,
         view: View,
-        msg: MessagePayload, 
+        msg: MessagePayload,
         mut signature_service: SignatureService,
     ) -> Self {
-        let m = Self {
+        let message = Self {
             msg_type,
             author,
             view,
             msg,
             signature: Signature::default(),
         };
-        let sig = signature_service.request_signature(m.digest()).await;
-        Self { signature: sig, ..m }
+        
+        let signature = signature_service.request_signature(message.digest()).await;
+        Self { signature, ..message }
     }
 }
 
@@ -161,20 +163,34 @@ impl Node {
         }
     }
 
-    pub fn digest(&self) -> Digest {        
+    pub fn digest(&self) -> Digest {
         let blob_digest = if self.blob.is_empty() {
             Fr::from(0u64)
         } else {
-            let b = decode(self.blob.clone()).unwrap();
-            let blk = Blk::dec(&mut b.into_iter()).unwrap();
-            blk.hash()
+            match decode(&self.blob) {
+                Ok(bytes) => {
+                    match Blk::dec(&mut bytes.into_iter()) {
+                        Ok(blk) => blk.hash(),
+                        Err(_) => {
+                            error!("Failed to decode block from blob: {}", self.blob);
+                            Fr::from(0u64)
+                        }
+                    }
+                }
+                Err(_) => {
+                    error!("Failed to decode hex blob: {}", self.blob);
+                    Fr::from(0u64)
+                }
+            }
         };
-        let elements = (
-            self.parent.to_field(),
-            blob_digest,
-        );
-        let b: Vec<u8> = elements.hash().enc().collect();
-        Digest(b.try_into().expect("Failed to convert node hash bytes to digest"))
+        
+        let elements = (self.parent.to_field(), blob_digest);
+        let bytes: Vec<u8> = elements.hash().enc().collect();
+        
+        Digest(bytes.try_into().unwrap_or_else(|_| {
+            error!("Failed to convert hash bytes to digest");
+            [0u8; 32]
+        }))
     }
 
     pub fn new(parent: Digest, blob: String) -> Self {
@@ -221,8 +237,8 @@ impl QuorumCert {
             self.view.digest(),
             self.node_digest.to_field(),
         ];
-        let b: Vec<u8> = elements.hash().enc().collect();
-        Digest(b.try_into().expect("Failed to convert qc hash bytes to digest"))
+        let bytes: Vec<u8> = elements.hash().enc().collect();
+        Digest(bytes.try_into().unwrap_or([0u8; 32]))
     }
     pub fn verify(&self, committee: &Committee) -> ConsensusResult<()> {
         // Ensure the QC has a quorum.

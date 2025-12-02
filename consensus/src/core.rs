@@ -1,41 +1,51 @@
-use crate::aggregator::Aggregator;
-use crate::error::ConsensusResult;
-use crate::timer::Timer;
-use crate::{LeaderElector, Parameters};
-use crate::config::Committee;
-use crate::consensus::{ConsensusMessage, MessagePayload, Node, QuorumCert, View};
+// Core consensus imports
+use crate::{
+    aggregator::Aggregator,
+    config::Committee,
+    consensus::{ConsensusMessage, MessagePayload, Node, QuorumCert, View},
+    error::ConsensusResult,
+    timer::Timer,
+    LeaderElector, Parameters,
+};
+
+// External crates
+use async_recursion::async_recursion;
 use crypto::{PublicKey, SignatureService};
 use libp2p::PeerId;
-use log::{error, warn, info};
-use async_recursion::async_recursion;
+use log::{error, info, warn};
 use network::P2pLibp2p;
 use replica::replica::ReplicaClientApi;
+use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use std::sync::Arc;
 
 pub struct Core {
+    // Node identity and configuration
     pub name: PublicKey,
     pub committee: Committee,
     pub parameters: Parameters,
-    store: Store,
+    
+    // Core services
     pub signature_service: SignatureService,
     pub leader_elector: LeaderElector,
-    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
-    pub tx_commit: Sender<String>,
-    pub timer: Timer,
-    pub network: P2pLibp2p,
     pub aggregator: Aggregator,
     pub replica_client: Arc<dyn ReplicaClientApi>,
-
-    // state variables
+    
+    // I/O channels
+    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+    pub tx_commit: Sender<String>,
+    pub network: P2pLibp2p,
+    
+    // Storage and timing
+    store: Store,
+    pub timer: Timer,
+    
+    // Consensus state
     pub view: View,
     pub voted_node: Node,
     pub prepare_qc: QuorumCert,
     pub lock_qc: QuorumCert,
     pub lock_blob: String,
-    
-    // View synchronization
     pub consecutive_timeouts: u64,
 }
 
@@ -117,24 +127,29 @@ impl Core {
     }
 
     async fn handle_consensus_message(&mut self, message: ConsensusMessage) -> ConsensusResult<()> {
-        match (&message.msg_type, &message.msg) {
-            (crate::consensus::ConsensusMessageType::NewView, MessagePayload::NewView(qc)) => {
-                self.handle_new_view(message.author, message.view, qc.clone()).await
-            },
-            (crate::consensus::ConsensusMessageType::Prepare, MessagePayload::Prepare(node, qc)) => {
-                self.handle_prepare(message.author, message.view, node.clone(), qc.clone()).await
-            },
-            (crate::consensus::ConsensusMessageType::PreCommit, MessagePayload::PreCommit(qc)) => {
-                self.handle_pre_commit(message.author, message.view, qc.clone()).await
-            },
-            (crate::consensus::ConsensusMessageType::Commit, MessagePayload::Commit(qc)) => {
-                self.handle_commit(message.author, message.view, qc.clone()).await
-            },
-            (crate::consensus::ConsensusMessageType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
-                self.handle_decide(message.author, message.view, qc.clone(), wp_blk.to_string()).await
-            },
+        use crate::consensus::ConsensusMessageType as MsgType;
+        
+        match (message.msg_type, message.msg) {
+            (MsgType::NewView, MessagePayload::NewView(qc)) => {
+                self.handle_new_view(message.author, message.view, qc).await
+            }
+            (MsgType::Prepare, MessagePayload::Prepare(node, qc)) => {
+                self.handle_prepare(message.author, message.view, node, qc).await
+            }
+            (MsgType::PreCommit, MessagePayload::PreCommit(qc)) => {
+                self.handle_pre_commit(message.author, message.view, qc).await
+            }
+            (MsgType::Commit, MessagePayload::Commit(qc)) => {
+                self.handle_commit(message.author, message.view, qc).await
+            }
+            (MsgType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
+                self.handle_decide(message.author, message.view, qc, wp_blk).await
+            }
             _ => {
-                error!("Mismatched message type {:?} and payload", message.msg_type);
+                error!(
+                    "Mismatched message type {:?} and payload for message from {}",
+                    message.msg_type, message.author
+                );
                 Err(crate::ConsensusError::InvalidPayload)
             }
         }
@@ -142,40 +157,52 @@ impl Core {
 
     #[async_recursion]
     pub async fn start_new_round(&mut self, round: u64) {
-        // get proposal from replica to get height
+        // Get proposal from replica to determine height
         let height = match self.fetch_and_parse_proposal().await {
             Some((_, height)) => height,
-            None => return,
+            None => {
+                warn!("Failed to get proposal for round {}, using previous height", round);
+                return;
+            }
         };
 
-        self.view.round = round;
-        self.view.height = height;
+        // Update view state
+        self.view = View { height, round };
         self.voted_node = Node::default();
         self.timer.reset();
-        info!("Starting new view {:?}", self.view);
+        
+        info!("Starting new view: {}", self.view);
         
         // Send NewView message with current PrepareQC
         if let Err(e) = self.send_new_view().await {
-            error!("Failed to send NewView message: {}", e);
+            error!("Failed to send NewView message for view {}: {}", self.view, e);
         }
     }
 
     async fn local_timeout_round(&mut self) -> ConsensusResult<()> {
         self.consecutive_timeouts += 1;
-        warn!("Timeout occurred for view {:?} (consecutive: {})", 
-              self.view, self.consecutive_timeouts);
-        // Apply exponential backoff for timeout duration with overflow protection
-        let new_timeout = if self.consecutive_timeouts == 0 {
-            self.parameters.timeout_delay
-        } else {
-            // Use saturating arithmetic to prevent overflow
-            let backoff_multiplier = 2_u64.saturating_pow((self.consecutive_timeouts - 1) as u32);
-            self.parameters.timeout_delay.saturating_mul(backoff_multiplier)
-        };
-               
-        // Update timer with new timeout
+        warn!(
+            "Timeout occurred for view {} (consecutive: {})",
+            self.view, self.consecutive_timeouts
+        );
+        
+        // Calculate new timeout with exponential backoff
+        let new_timeout = self.calculate_timeout_duration();
         self.timer = Timer::new(new_timeout);
+        
+        // Move to next round
         self.start_new_round(self.view.round + 1).await;
         Ok(())
+    }
+    
+    fn calculate_timeout_duration(&self) -> u64 {
+        if self.consecutive_timeouts == 0 {
+            return self.parameters.timeout_delay;
+        }
+        
+        // Use saturating arithmetic to prevent overflow
+        let backoff_multiplier = 2_u64.saturating_pow((self.consecutive_timeouts - 1) as u32);
+        
+        self.parameters.timeout_delay.saturating_mul(backoff_multiplier)
     }
 }

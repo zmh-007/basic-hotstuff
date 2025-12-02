@@ -11,17 +11,19 @@ type StoreResult<T> = Result<T, StoreError>;
 type Key = Vec<u8>;
 type Value = Vec<u8>;
 
+// Column family names
 const BLOCKS_INDEX_CF: &str = "blocks_index";
 const BLOCKS_CF: &str = "blocks";
 const TRANSACTIONS_CF: &str = "transactions";
 const CONSENSUS_CF: &str = "consensus";
 const UTXO_CACHE_CF: &str = "utxo_cache";
 
-const ROUND_PREFIX: &[u8] = b"round";
-const LAST_VOTED_ROUND_PREFIX: &[u8] = b"last_voted_round";
-const LAST_COMMITTED_ROUND_PREFIX: &[u8] = b"last_committed_round";
-const QC_PREFIX: &[u8] = b"qc";
-const UTXO_CACHE_PREFIX: &[u8] = b"utxo_cache";
+// Key prefixes for consensus data
+const ROUND_KEY: &[u8] = b"round";
+const LAST_VOTED_ROUND_KEY: &[u8] = b"last_voted_round";
+const LAST_COMMITTED_ROUND_KEY: &[u8] = b"last_committed_round";
+const QC_KEY: &[u8] = b"qc";
+const UTXO_CACHE_KEY: &[u8] = b"utxo_cache";
 
 pub enum StoreCommand {
     WriteBlockIndex(Key, Value),
@@ -53,20 +55,29 @@ pub struct Store {
 
 impl Store {
     pub fn new(path: &str) -> StoreResult<Self> {
+        let db = Self::create_database(path)?;
+        let (tx, rx) = channel(100);
+        
+        tokio::spawn(Self::process_commands(rx, db));
+        Ok(Self { channel: tx })
+    }
+    
+    fn create_database(path: &str) -> StoreResult<Arc<DB>> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
-        let cfs = vec![
-            ColumnFamilyDescriptor::new(BLOCKS_INDEX_CF, Options::default()),
-            ColumnFamilyDescriptor::new(BLOCKS_CF, Options::default()),
-            ColumnFamilyDescriptor::new(TRANSACTIONS_CF, Options::default()),
-            ColumnFamilyDescriptor::new(CONSENSUS_CF, Options::default()),
-            ColumnFamilyDescriptor::new(UTXO_CACHE_CF, Options::default()),
+        
+        let column_families = [
+            BLOCKS_INDEX_CF, BLOCKS_CF, TRANSACTIONS_CF, 
+            CONSENSUS_CF, UTXO_CACHE_CF
         ];
-        let db = Arc::new(DB::open_cf_descriptors(&opts, path, cfs)?);
-        let (tx, rx) = channel(100);
-        tokio::spawn(Self::process_commands(rx, db));
-        Ok(Self { channel: tx })
+        
+        let cfs: Vec<_> = column_families
+            .iter()
+            .map(|&name| ColumnFamilyDescriptor::new(name, Options::default()))
+            .collect();
+            
+        Ok(Arc::new(DB::open_cf_descriptors(&opts, path, cfs)?))
     }
 
     async fn process_commands(
@@ -105,21 +116,21 @@ impl Store {
                 }
                 StoreCommand::WriteRound(round) => {
                     let value = round.to_be_bytes().to_vec();
-                    let _ = db.put_cf(&consensus_cf, ROUND_PREFIX, &value);
+                    let _ = db.put_cf(&consensus_cf, ROUND_KEY, &value);
                 }
                 StoreCommand::WriteLastVotedRound(round) => {
                     let value = round.to_be_bytes().to_vec();
-                    let _ = db.put_cf(&consensus_cf, LAST_VOTED_ROUND_PREFIX, &value);
+                    let _ = db.put_cf(&consensus_cf, LAST_VOTED_ROUND_KEY, &value);
                 }
                 StoreCommand::WriteLastCommittedRound(round) => {
                     let value = round.to_be_bytes().to_vec();
-                    let _ = db.put_cf(&consensus_cf, LAST_COMMITTED_ROUND_PREFIX, &value);
+                    let _ = db.put_cf(&consensus_cf, LAST_COMMITTED_ROUND_KEY, &value);
                 }
                 StoreCommand::WriteQC(value) => {
-                    let _ = db.put_cf(&consensus_cf, QC_PREFIX, &value);
+                    let _ = db.put_cf(&consensus_cf, QC_KEY, &value);
                 }
                 StoreCommand::WriteUTXOCache(value) => {
-                    let _ = db.put_cf(&utxo_cache_cf, UTXO_CACHE_PREFIX, &value);
+                    let _ = db.put_cf(&utxo_cache_cf, UTXO_CACHE_KEY, &value);
                 }
                 StoreCommand::ReadBlockIndex(key, sender) => {
                     let response = db.get_cf(&blocks_index_cf, &key);
@@ -134,23 +145,23 @@ impl Store {
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadRound(sender) => {
-                    let response = db.get_cf(&consensus_cf, ROUND_PREFIX);
+                    let response = db.get_cf(&consensus_cf, ROUND_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadLastVotedRound(sender) => {
-                    let response = db.get_cf(&consensus_cf, LAST_VOTED_ROUND_PREFIX);
+                    let response = db.get_cf(&consensus_cf, LAST_VOTED_ROUND_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadLastCommittedRound(sender) => {
-                    let response = db.get_cf(&consensus_cf, LAST_COMMITTED_ROUND_PREFIX);
+                    let response = db.get_cf(&consensus_cf, LAST_COMMITTED_ROUND_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadQC(sender) => {
-                    let response = db.get_cf(&consensus_cf, QC_PREFIX);
+                    let response = db.get_cf(&consensus_cf, QC_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadUTXOCache(sender) => {
-                    let response = db.get_cf(&utxo_cache_cf, UTXO_CACHE_PREFIX);
+                    let response = db.get_cf(&utxo_cache_cf, UTXO_CACHE_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::NotifyReadBlock(key, sender) => {

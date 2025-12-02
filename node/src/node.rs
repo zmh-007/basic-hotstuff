@@ -1,10 +1,16 @@
-use crate::config::Export as _;
-use crate::config::{Committee, ConfigError, Parameters, Secret};
-use log::{info};
-use store::Store;
+// Standard library imports
 use tokio::sync::mpsc::{channel, Receiver};
-use crypto::SignatureService;
+
+// External crate imports
+use log::info;
+
+// Internal crate imports
 use consensus::Consensus;
+use crypto::SignatureService;
+use store::Store;
+
+// Local imports
+use crate::config::{Committee, ConfigError, Parameters, Secret, Export as _};
 
 /// The default channel capacity for this module.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -22,25 +28,38 @@ impl Node {
     ) -> Result<Self, ConfigError> {
         let (tx_commit, rx_commit) = channel(CHANNEL_CAPACITY);
 
-        // Read the committee and secret key from file.
+        // Read configuration files
+        info!("Loading node configuration...");
         let committee = Committee::read(committee_file)?;
         let secret = Secret::read(key_file)?;
         let name = secret.name;
         let secret_key = secret.secret;
 
-        // Load default parameters if none are specified.
+        // Load parameters (default if not specified)
         let parameters = match parameters {
-            Some(filename) => Parameters::read(&filename)?,
-            None => Parameters::default(),
+            Some(filename) => {
+                info!("Loading parameters from: {}", filename);
+                Parameters::read(&filename)?
+            }
+            None => {
+                info!("Using default parameters");
+                Parameters::default()
+            }
         };
 
-        // Make the data store.
-        let store = Store::new(store_path).expect("Failed to create store");
+        // Initialize data store
+        info!("Initializing data store at: {}", store_path);
+        let store = Store::new(store_path)
+            .map_err(|e| ConfigError::ReadError {
+                file: store_path.to_string(),
+                message: format!("Store initialization failed: {}", e),
+            })?;
 
-        // Run the signature service.
+        // Initialize signature service
         let signature_service = SignatureService::new(secret_key);
 
-        // Run the consensus core.
+        // Start consensus core
+        info!("Starting consensus core for node: {}", name);
         Consensus::spawn(
             name,
             committee.consensus,
@@ -50,8 +69,8 @@ impl Node {
             tx_commit,
         );
 
-        info!("Node {} successfully booted", name);
-        Ok(Self {commit: rx_commit })
+        info!("Node {} successfully booted and ready", name);
+        Ok(Self { commit: rx_commit })
     }
 
     pub fn print_key_file(filename: &str) -> Result<(), ConfigError> {
@@ -59,12 +78,22 @@ impl Node {
     }
 
     pub async fn start(&mut self) {
+        info!("Node started, waiting for committed blocks...");
+        
         loop {
             tokio::select! {
-                Some(blob) = self.commit.recv() => {
-                    // Execute block
-                    // TODO: execute the committed node's commands
-                    info!("Executing committed block {:?}", blob);
+                Some(block) = self.commit.recv() => {
+                    info!("Received committed block: {}", block);
+                    // TODO: Implement actual block execution logic
+                    // This would typically involve:
+                    // 1. Parsing the block contents
+                    // 2. Executing transactions in order
+                    // 3. Updating application state
+                    // 4. Reporting execution results
+                }
+                else => {
+                    info!("Consensus commit channel closed, shutting down node");
+                    break;
                 }
             }
         }
