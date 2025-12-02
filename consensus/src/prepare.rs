@@ -85,12 +85,25 @@ impl Core {
             high_qc.verify(&self.committee)?;
         }
 
-        // Verify proposal from replica
-        if let Err(error) = self.replica_client.verify_proposal(node.blob.clone()).await {
-            error!("Proposal verification failed: {:?}", error);
-            return Ok(());
+        // Check if we should use locked blob (only for same height)
+        if !self.lock_blob.is_empty() && self.lock_qc.view.height == view.height {
+            // If we have a locked blob for the same height, the proposal must match it
+            if node.blob != self.lock_blob {
+                error!(
+                    "Proposal mismatch for height {}: expected locked blob '{}', got '{}'", 
+                    view.height, self.lock_blob, node.blob
+                );
+                return Ok(());
+            }
+            info!("Using locked blob for proposal verification at height {}", view.height);
+        } else {
+            // Verify proposal from replica if not using locked blob or different height
+            if let Err(error) = self.replica_client.verify_proposal(node.blob.clone()).await {
+                error!("Proposal verification failed: {:?}", error);
+                return Ok(());
+            }
+            info!("Proposal verification successful");
         }
-        info!("Proposal verification successful");
 
         // Apply safety and liveness rules
         self.extend(&node, &high_qc)?;
