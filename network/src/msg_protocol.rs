@@ -78,7 +78,7 @@ impl NetworkBehaviour for MsgProtocol {
     fn handle_established_inbound_connection(
         &mut self, _connection_id: libp2p::swarm::ConnectionId, _peer: PeerId, _local_addr: &libp2p::Multiaddr, _remote_addr: &libp2p::Multiaddr,
     ) -> Result<libp2p::swarm::THandler<Self>, libp2p::swarm::ConnectionDenied> {
-        // 拒绝所有入站连接 - 只允许主动出站连接
+        // Reject all inbound connections - only allow active outbound connections
         Err(libp2p::swarm::ConnectionDenied::new("This node does not accept inbound connections"))
     }
 
