@@ -7,11 +7,9 @@ use crypto::{Digest, PublicKey};
 use log::{debug, error, info, warn};
 
 impl Core {
-    /// Send Prepare message with current PrepareQC
     pub async fn send_prepare(&mut self, high_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Sending Prepare message for view {}", self.view);
         
-        // Verify leadership
         if !self.check_is_leader(&self.view) {
             warn!("Cannot send Prepare message - not the leader for view {}", self.view);
             return Ok(());
@@ -31,7 +29,6 @@ impl Core {
             }
         };
 
-        // Create node and prepare message
         let node = Node::new(high_qc.node_digest, blob);
         let prepare_message = ConsensusMessage::new(
             ConsensusMessageType::Prepare,
@@ -41,14 +38,11 @@ impl Core {
             self.signature_service.clone(),
         ).await;
 
-        // Broadcast message
         let payload = bincode::serialize(&prepare_message)
             .map_err(ConsensusError::SerializationError)?;
             
         debug!("Broadcasting Prepare message for view {}", self.view);
         self.network.send(None, payload)?;
-        
-        // Handle our own prepare message
         self.handle_prepare(self.name, self.view.clone(), node, high_qc).await
     }
 
@@ -60,8 +54,6 @@ impl Core {
         high_qc: QuorumCert,
     ) -> ConsensusResult<()> {
         info!("Received Prepare for view {}", view);
-        
-        // Basic validations
         if view != self.view {
             debug!("Ignoring Prepare for view {} (current: {})", view, self.view);
             return Ok(());
@@ -80,7 +72,6 @@ impl Core {
             return Ok(());
         }
 
-        // Verify QC if not default (genesis)
         if high_qc != QuorumCert::default() {
             high_qc.verify(&self.committee)?;
         }
@@ -97,7 +88,6 @@ impl Core {
             }
             info!("Using locked blob for proposal verification at height {}", view.height);
         } else {
-            // Verify proposal from replica if not using locked blob or different height
             if let Err(error) = self.replica_client.verify_proposal(node.blob.clone()).await {
                 error!("Proposal verification failed: {:?}", error);
                 return Ok(());
@@ -109,14 +99,12 @@ impl Core {
         self.extend(&node, &high_qc)?;
         self.safe_node(&node, &high_qc)?;
         
-        // Record vote and send prepare vote
         self.voted_node = node.clone();
         self.persist_voted_node().await;
         self.send_prepare_vote(node.digest()).await
     }
 
     fn extend(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {        
-        // Check if the node's parent matches the QC's node
         if node.parent != high_qc.node_digest {
             return Err(ConsensusError::InvalidQC(
                 format!("expect parent {:?}, got {:?}", high_qc.node_digest, node.parent)
@@ -126,7 +114,6 @@ impl Core {
     }
 
     fn safe_node(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {
-        // Genesis case - no safety check needed
         if self.lock_qc == QuorumCert::default() {
             debug!("No lock QC (genesis), node is safe");
             return Ok(());
@@ -157,8 +144,6 @@ impl Core {
 
     pub async fn send_prepare_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
         info!("Sending PrepareVote message");
-        
-        // Create the prepare vote message with signature service
         let prepare_vote_message = ConsensusMessage::new(
             ConsensusMessageType::Prepare,
             self.name,
@@ -167,10 +152,8 @@ impl Core {
             self.signature_service.clone(),
         ).await;
 
-       // Serialize the message
         match bincode::serialize(&prepare_vote_message) {
             Ok(payload) => {
-                // send the message to leader
                 let leader = self.leader_elector.get_leader(&self.view);
                 debug!("Sending PrepareVote {:?} to leader {:?}", node_digest, leader);
                 self.network.send(None, payload)?;
