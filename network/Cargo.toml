@@ -1,28 +1,13 @@
 [package]
 name = "network"
-version = "0.1.0"
+version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-libp2p = { version = "0.54", features = [
-    "tokio",
-    "ping",
-    "identify",
-    "noise",
-    "yamux",
-    "tcp",
-    "request-response",
-    "cbor",
-] }
-tokio = { version = "1.48.0", features = [
-    "sync",
-    "macros",
-    "rt-multi-thread",
-    "time",
-    "signal",
-] }
-serde = { version = "1.0.163", features = ["derive"] }
-serde_json = "1.0.96"
-log = "0.4.0"
-futures = "0.3.28"
-base64 = "0.21"
+libp2p = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+futures = { workspace = true }
+base64 = { workspace = true }
