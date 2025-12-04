@@ -55,7 +55,7 @@ impl ReplicaClientError {
 pub trait ReplicaClientApi: Send + Sync {
     async fn get_proposal(&self) -> Result<Value>;
     async fn verify_proposal(&self, msg: String) -> Result<()>;
-    async fn finalize_block(&self, msg: String) -> Result<()>;
+    async fn submit_next_block(&self, msg: String) -> Result<()>;
 }
 
 type Result<T> = std::result::Result<T, ReplicaClientError>;
@@ -214,10 +214,10 @@ impl ReplicaClientApi for ReplicaClient {
         Ok(())
     }
 
-    async fn finalize_block(&self, wp_blk: String) -> Result<()> {
+    async fn submit_next_block(&self, wp_blk: String) -> Result<()> {
         let block = Self::ensure_hex_prefix(wp_blk);
         let response = self.send_rpc_request("submit_next_block", block).await?;
-        self.check_rpc_error(&response, "finalize_block")?;
+        self.check_rpc_error(&response, "submit_next_block")?;
         Ok(())
     }
 }

@@ -15,8 +15,8 @@ impl Core {
         if let Err(e) = self.tx_commit.send(wp_blk.clone()).await {
             error!("Failed to send block through the commit channel: {}", e);
         }
-        if let Err(e) = self.replica_client.finalize_block(wp_blk.clone()).await {
-            error!("Failed to finalize blk: {:?}", e);
+        if let Err(e) = self.replica_client.submit_next_block(wp_blk.clone()).await {
+            error!("Failed to submit next block: {:?}", e);
         }
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
