@@ -2,7 +2,7 @@ use std::{pin::Pin, time::Duration};
 use futures::Future;
 use serde::{Serialize};
 use serde_json::{json, Value};
-use log::{debug, error};
+use log::debug;
 use crate::replica_api::{JsonRpcRequest, JsonRpcResponse};
 use async_trait::async_trait;
 
