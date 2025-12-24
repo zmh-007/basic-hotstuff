@@ -1,9 +1,9 @@
 // Copyright(C) Facebook, Inc. and its affiliates.
 
 // Standard library imports
-use std::array::TryFromSliceError;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::fmt;
+use hex;
 
 // External crate imports
 use base64::{Engine as _, engine::general_purpose};
@@ -11,53 +11,40 @@ use rand::RngCore;
 use serde::{de, ser, Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use zk::{AsBytes, Fr, ToHash};
+use zkp::{Scalar, Digest as ZkpDigest};
 
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
 pub mod crypto_tests;
 
-/// Represents a hash digest (32 bytes).
-#[derive(Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd, Copy)]
-pub struct Digest(pub [u8; 32]);
+/// Represents a hash digest in hex string
+#[derive(Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
+pub struct Digest(pub String);
 
 impl Digest {
     pub fn to_vec(&self) -> Vec<u8> {
-        self.0.to_vec()
+        hex::decode(&self.0).expect("Digest string should be valid hex")
     }
 
     pub fn size(&self) -> usize {
         self.0.len()
     }
 
-    pub fn to_field(&self) -> Fr {
-        Fr::dec(&mut self.to_vec().into_iter())
-            .expect("Digest bytes should always be valid for Fr conversion")
+    pub fn to_field<S: Scalar, D: ZkpDigest<S>>(&self) -> D {
+        D::from_hex(&self.0)
+            .expect("Digest bytes is not valid for conversion to Digest in ZKP")
     }
 }
 
 impl fmt::Debug for Digest {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", general_purpose::STANDARD.encode(&self.0))
+        write!(f, "{}", &self.0)
     }
 }
 
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", general_purpose::STANDARD.encode(&self.0))
-    }
-}
-
-impl AsRef<[u8]> for Digest {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl TryFrom<&[u8]> for Digest {
-    type Error = TryFromSliceError;
-    fn try_from(item: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Digest(item.try_into()?))
+        write!(f, "{}", &self.0)
     }
 }
 
@@ -85,24 +72,6 @@ impl PublicKey {
         
         let array = bytes.try_into().map_err(|_| base64::DecodeError::InvalidLength)?;
         Ok(Self(array))
-    }
-
-    pub fn to_hash(&self) -> Fr {
-        const CHUNK_SIZE: usize = 24;
-        const OFFSET: usize = 8;
-        
-        let mut chunk1 = [0u8; 32];
-        let mut chunk2 = [0u8; 32];
-        
-        chunk1[OFFSET..].copy_from_slice(&self.0[..CHUNK_SIZE]);
-        chunk2[OFFSET..].copy_from_slice(&self.0[CHUNK_SIZE..]);
-        
-        let fr1 = Fr::dec(&mut chunk1.to_vec().into_iter())
-            .expect("PublicKey chunk1 should be valid for Fr conversion");
-        let fr2 = Fr::dec(&mut chunk2.to_vec().into_iter())
-            .expect("PublicKey chunk2 should be valid for Fr conversion");
-            
-        (fr1, fr2).hash()
     }
 }
 

@@ -4,7 +4,6 @@ version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-zk = { workspace = true }
 l0 = { workspace = true }
 rocksdb = { workspace = true }
 tokio = { workspace = true }

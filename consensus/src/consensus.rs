@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, sync::Arc};
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use zk::{AsBytes, Fr, ToHash};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct View {
@@ -33,12 +33,12 @@ impl View {
         Self { height: 1, round: 0 }
     }
 
-    pub fn digest(&self) -> Fr {
+    pub fn digest<S: Scalar, D: ZkpDigest<S>>(&self) -> D {
         let elements = vec![
-            Fr::from(self.height),
-            Fr::from(self.round),
+            S::from_u64(self.height),
+            S::from_u64(self.round),
         ];
-        elements.hash()
+        D::hash_from_scalars_with_padding(&elements)
     }
 }
 
@@ -58,13 +58,13 @@ pub enum ConsensusMessageType {
 }
 
 impl ConsensusMessageType {
-    fn to_field(&self) -> Fr {
+    fn to_field<S: Scalar>(&self) -> S {
         match self {
-            ConsensusMessageType::Prepare => Fr::from(0u64),
-            ConsensusMessageType::PreCommit => Fr::from(1u64),
-            ConsensusMessageType::Commit => Fr::from(2u64),
-            ConsensusMessageType::Decide => Fr::from(3u64),
-            ConsensusMessageType::NewView => Fr::from(4u64),
+            ConsensusMessageType::Prepare => S::from_u64(0u64),
+            ConsensusMessageType::PreCommit => S::from_u64(1u64),
+            ConsensusMessageType::Commit => S::from_u64(2u64),
+            ConsensusMessageType::Decide => S::from_u64(3u64),
+            ConsensusMessageType::NewView => S::from_u64(4u64),
         }
     }
     pub fn to_string(&self) -> &'static str {
@@ -92,18 +92,17 @@ pub enum MessagePayload {
 }
 
 impl MessagePayload {
-    pub fn digest(&self) -> Digest {
+    pub fn digest<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>>(&self) -> Digest {
         match self {
             Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
-                qc.digest()
+                qc.digest::<S, D>()
             }
             Self::Prepare(node, qc) => {
-                let elements = vec![node.digest().to_field(), qc.digest().to_field()];
-                let bytes: Vec<u8> = elements.hash().enc().collect();
-                Digest(bytes.try_into().unwrap_or([0u8; 32]))
+                let elements = vec![node.digest::<N, S, D, P, V>().to_field::<S, D>().to_scalars(), qc.digest::<S, D>().to_field::<S, D>().to_scalars()].concat();
+                Digest(D::hash_from_scalars_with_padding(&elements).to_hex())
             }
             Self::PrepareVote(digest) | Self::PreCommitVote(digest) | Self::CommitVote(digest) => {
-                *digest
+                digest.clone()
             }
         }
     }
@@ -119,17 +118,15 @@ pub struct ConsensusMessage {
 }
 
 impl ConsensusMessage {
-    pub fn digest(&self) -> Digest {
-        let elements = vec![
-            self.msg_type.to_field(),
-            self.view.digest(),
-            self.msg.digest().to_field(),
-        ];
-        let bytes: Vec<u8> = elements.hash().enc().collect();
-        Digest(bytes.try_into().unwrap_or([0u8; 32]))
+    pub fn digest<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>>(&self) -> Digest {
+        let mut elements = Vec::new();
+        elements.push(self.msg_type.to_field());
+        elements.extend(self.view.digest::<S, D>().to_scalars());
+        elements.extend(self.msg.digest::<N, S, D, P, V>().to_field::<S, D>().to_scalars());
+        Digest(D::hash_from_scalars_with_padding(&elements).to_hex())
     }
 
-    pub async fn new(
+    pub async fn new<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>>(
         msg_type: ConsensusMessageType,
         author: PublicKey,
         view: View,
@@ -144,7 +141,7 @@ impl ConsensusMessage {
             signature: Signature::default(),
         };
         
-        let signature = signature_service.request_signature(message.digest()).await;
+        let signature = signature_service.request_signature(message.digest::<N, S, D, P, V>()).await;
         Self { signature, ..message }
     }
 }
@@ -163,34 +160,29 @@ impl Node {
         }
     }
 
-    pub fn digest(&self) -> Digest {
+    pub fn digest<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>>(&self) -> Digest {
         let blob_digest = if self.blob.is_empty() {
-            Fr::from(0u64)
+            D::default()
         } else {
             match decode(&self.blob) {
                 Ok(bytes) => {
-                    match Blk::dec(&mut bytes.into_iter()) {
+                    match Blk::<N, S, D, P, V>::dec(&mut bytes.into_iter()) {
                         Ok(blk) => blk.hash(),
                         Err(_) => {
                             error!("Failed to decode block from blob: {}", self.blob);
-                            Fr::from(0u64)
+                            D::default()
                         }
                     }
                 }
                 Err(_) => {
                     error!("Failed to decode hex blob: {}", self.blob);
-                    Fr::from(0u64)
+                    D::default()
                 }
             }
         };
         
-        let elements = (self.parent.to_field(), blob_digest);
-        let bytes: Vec<u8> = elements.hash().enc().collect();
-        
-        Digest(bytes.try_into().unwrap_or_else(|_| {
-            error!("Failed to convert hash bytes to digest");
-            [0u8; 32]
-        }))
+        let elements = vec![self.parent.to_field::<S, D>().to_scalars(), blob_digest.to_scalars()].concat();
+        Digest(D::hash_from_scalars_with_padding(&elements).to_hex())
     }
 
     pub fn new(parent: Digest, blob: String) -> Self {
@@ -231,16 +223,14 @@ impl QuorumCert {
             public_keys: Vec::new(),
         }
     }
-    fn digest(&self) -> Digest {
-        let elements = vec![
-            self.qc_type.to_field(),
-            self.view.digest(),
-            self.node_digest.to_field(),
-        ];
-        let bytes: Vec<u8> = elements.hash().enc().collect();
-        Digest(bytes.try_into().unwrap_or([0u8; 32]))
+    fn digest<S: Scalar, D: ZkpDigest<S>>(&self) -> Digest {
+        let mut elements = Vec::new();
+        elements.push(self.qc_type.to_field());
+        elements.extend(self.view.digest::<S, D>().to_scalars());
+        elements.extend(self.node_digest.to_field::<S, D>().to_scalars());
+        Digest(D::hash_from_scalars_with_padding(&elements).to_hex())
     }
-    pub fn verify(&self, committee: &Committee) -> ConsensusResult<()> {
+    pub fn verify<S: Scalar, D: ZkpDigest<S>>(&self, committee: &Committee) -> ConsensusResult<()> {
         // Ensure the QC has a quorum.
         let mut weight = 0;
         let mut used = HashSet::new();
@@ -269,7 +259,7 @@ impl QuorumCert {
         }
 
         // Check the signature.
-        verify_signature(&self.digest(), &self.agg_pk, &self.agg_sig)?;
+        verify_signature(&self.digest::<S, D>(), &self.agg_pk, &self.agg_sig)?;
         Ok(())
     }
 }
@@ -335,21 +325,4 @@ impl Consensus {
 
 fn env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crypto::Digest;
-
-    #[test] 
-    fn test_node_digest_with_blob() {
-        let parent = Digest([0u8; 32]);
-        let test_blob = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".to_string();
-        
-        let node = Node::new(parent, test_blob.clone());
-        let digest = node.digest();
-        
-        println!("Node Digest with Blob: {:?}", digest);
-    }
 }

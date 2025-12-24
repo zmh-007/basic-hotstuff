@@ -2,7 +2,6 @@ use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 
-
 impl Core {
     pub async fn handle_commit(&mut self, _: PublicKey, view: View, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
         info!("Received Commit for view {:?}", view);
