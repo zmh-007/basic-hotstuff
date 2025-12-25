@@ -27,3 +27,4 @@ hex_str = { workspace = true }
 crypto = { workspace = true }
 store = { workspace = true }
 consensus = { workspace = true }
+zkp = { workspace = true }

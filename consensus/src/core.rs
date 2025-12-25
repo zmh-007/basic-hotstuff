@@ -18,21 +18,22 @@ use replica::replica::ReplicaClientApi;
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
-pub struct Core {
+pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> {
     // Node identity and configuration
     pub name: PublicKey,
     pub committee: Committee,
     pub parameters: Parameters,
     
     // Core services
-    pub signature_service: SignatureService,
+    pub signature_service: SignatureService<S, D>,
     pub leader_elector: LeaderElector,
-    pub aggregator: Aggregator,
+    pub aggregator: Aggregator<S, D>,
     pub replica_client: Arc<dyn ReplicaClientApi>,
     
     // I/O channels
-    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, P, V>)>,
     pub tx_commit: Sender<String>,
     pub network: P2pLibp2p,
     
@@ -41,24 +42,24 @@ pub struct Core {
     pub timer: Timer,
     
     // Consensus state
-    pub view: View,
-    pub voted_node: Node,
-    pub prepare_qc: QuorumCert,
-    pub lock_qc: QuorumCert,
+    pub view: View<S, D>,
+    pub voted_node: Node<N, S, D, P, V>,
+    pub prepare_qc: QuorumCert<S, D>,
+    pub lock_qc: QuorumCert<S, D>,
     pub lock_blob: String,
     pub consecutive_timeouts: u64,
 }
 
-impl Core {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
-        signature_service: SignatureService,
+        signature_service: SignatureService<S, D>,
         leader_elector: LeaderElector,
         store: Store,
         parameters: Parameters,
-        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, P, V>)>,
         network: P2pLibp2p,
         tx_commit: Sender<String>,
         replica_client: Arc<dyn ReplicaClientApi>,
@@ -118,7 +119,7 @@ impl Core {
         }
     }
 
-    fn check_consensus_message(&self, _: &ConsensusMessage) -> ConsensusResult<()> {
+    fn check_consensus_message(&self, _: &ConsensusMessage<N, S, D, P, V>) -> ConsensusResult<()> {
         //TODO: already checked in network layer
         // if !self.committee.authorities.contains_key(&message.author) {
         //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
@@ -129,7 +130,7 @@ impl Core {
         Ok(())
     }
 
-    async fn handle_consensus_message(&mut self, message: ConsensusMessage) -> ConsensusResult<()> {
+    async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, P, V>) -> ConsensusResult<()> {
         use crate::consensus::ConsensusMessageType as MsgType;
         
         match (message.msg_type, message.msg) {
@@ -170,7 +171,8 @@ impl Core {
         };
 
         // Update view state
-        self.view = View { height, round };
+        self.view.height = height;
+        self.view.round = round;
         self.voted_node = Node::default();
         self.persist_voted_node().await;
         self.timer.reset();
@@ -214,7 +216,7 @@ impl Core {
     async fn restore_persistent_state(&mut self) {
         // Restore voted_node
         if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
-            if let Ok(voted_node) = bincode::deserialize::<Node>(&voted_node_bytes) {
+            if let Ok(voted_node) = bincode::deserialize::<Node<N, S, D, P, V>>(&voted_node_bytes) {
                 self.voted_node = voted_node;
                 info!("Restored voted_node: {}", self.voted_node.digest());
             }
@@ -222,7 +224,7 @@ impl Core {
         
         // Restore prepare_qc
         if let Ok(Some(prepare_qc_bytes)) = self.store.read_prepare_qc().await {
-            if let Ok(prepare_qc) = bincode::deserialize::<QuorumCert>(&prepare_qc_bytes) {
+            if let Ok(prepare_qc) = bincode::deserialize::<QuorumCert<S, D>>(&prepare_qc_bytes) {
                 self.prepare_qc = prepare_qc;
                 info!("Restored prepare_qc for view: {}", self.prepare_qc.view);
             }
@@ -230,7 +232,7 @@ impl Core {
         
         // Restore lock_qc
         if let Ok(Some(lock_qc_bytes)) = self.store.read_lock_qc().await {
-            if let Ok(lock_qc) = bincode::deserialize::<QuorumCert>(&lock_qc_bytes) {
+            if let Ok(lock_qc) = bincode::deserialize::<QuorumCert<S, D>>(&lock_qc_bytes) {
                 self.lock_qc = lock_qc;
                 info!("Restored lock_qc for view: {}", self.lock_qc.view);
             }

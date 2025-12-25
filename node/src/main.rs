@@ -6,6 +6,7 @@ mod node;
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use log::error;
+use zkp::mockimpl::{MockScalar, MockDigest, MockProof, MockVk};
 
 // Internal imports
 use crate::node::Node;
@@ -73,7 +74,7 @@ async fn main() {
             parameters,
             store,
         } => {
-            match Node::new(&committee, &keys, &store, parameters).await {
+            match Node::new::<8, MockScalar, MockDigest, MockProof, MockVk>(&committee, &keys, &store, parameters).await {
                 Ok(mut node) => {
                     node.start().await;
                 }

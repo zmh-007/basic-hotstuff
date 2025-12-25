@@ -4,8 +4,9 @@ use crate::error::ConsensusResult;
 use crypto::{PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
-impl Core {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
     /// Send NewView message with current PrepareQC
     pub async fn send_new_view(&mut self) -> ConsensusResult<()> {
         info!("Sending NewView message");
@@ -13,11 +14,11 @@ impl Core {
         let prepare_qc = self.prepare_qc.clone();
         
         // Create the NewView message with current view, high QC and signature service
-        let new_view_message = ConsensusMessage::new(
+        let new_view_message = ConsensusMessage::<N, S, D, P, V>::new(
             ConsensusMessageType::NewView,
             self.name,
             self.view.clone(), 
-            MessagePayload::NewView(prepare_qc.clone()),
+            MessagePayload::<N, S, D, P, V>::NewView(prepare_qc.clone()),
             self.signature_service.clone(),
         ).await;
         
@@ -29,7 +30,7 @@ impl Core {
                 if leader == self.name {
                     self.handle_new_view(self.name, self.view.clone(), prepare_qc.clone()).await?;
                 } else {
-                    debug!("Sending {:?} to {}", new_view_message, leader);
+                    debug!("Sending new_view_message, view: {:?} to {}", new_view_message.view, leader);
                     self.network.send(None, payload)?;
                 }
                 debug!("NewView message sent successfully");
@@ -41,7 +42,7 @@ impl Core {
         Ok(())
     }
 
-    pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_new_view(&mut self, author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received NewView for view {:?} from {:?}", view, author);
         if view != self.view {
             error!("Received NewView for view {:?}, but current view is {:?}", view, self.view);

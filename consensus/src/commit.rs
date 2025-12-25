@@ -1,9 +1,10 @@
 use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
-impl Core {
-    pub async fn handle_commit(&mut self, _: PublicKey, view: View, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+    pub async fn handle_commit(&mut self, _: PublicKey, view: View<S, D>, pre_commit_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received Commit for view {:?}", view);
         if view != self.view {
             error!("Received Commit for view {:?}, but current view is {:?}", view, self.view);
@@ -25,13 +26,13 @@ impl Core {
         Ok(())
     }
 
-    pub async fn send_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
+    pub async fn send_commit_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending Commit Vote message");
-        let commit_vote_message = ConsensusMessage::new(
+        let commit_vote_message = ConsensusMessage::<N, S, D, P, V>::new(
             ConsensusMessageType::Commit,
             self.name,
             self.view.clone(), 
-            MessagePayload::CommitVote(node_digest.clone()),
+            MessagePayload::<N, S, D, P, V>::CommitVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
@@ -50,7 +51,7 @@ impl Core {
         Ok(())
     }
 
-    async fn lock_qc_and_blob(&mut self, qc: QuorumCert) {
+    async fn lock_qc_and_blob(&mut self, qc: QuorumCert<S, D>) {
         self.lock_qc = qc.clone();
         self.lock_blob = self.voted_node.blob.clone();
         self.persist_lock_qc().await;

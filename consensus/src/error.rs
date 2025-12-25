@@ -1,5 +1,4 @@
-use crate::consensus::View;
-use crypto::{Digest, PublicKey};
+use crypto::PublicKey;
 use network::P2pError;
 use store::StoreError;
 use thiserror::Error;
@@ -51,11 +50,11 @@ pub enum ConsensusError {
     #[error("Received QC without a quorum")]
     QCRequiresQuorum,
 
-    #[error("Wrong leader: received block {digest} from {leader} at view {view}")]
+    #[error("Wrong leader: received block from {leader} at view (height: {height}, round: {round})")]
     WrongLeader {
-        digest: Digest,
+        height: u64,
+        round: u64,
         leader: PublicKey,
-        view: View,
     },
 
     #[error("Invalid payload")]

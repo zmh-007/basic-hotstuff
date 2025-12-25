@@ -1,10 +1,10 @@
 use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
-
-impl Core {
-    pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+    pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {
             error!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
@@ -27,13 +27,13 @@ impl Core {
         Ok(())
     }
 
-    pub async fn send_pre_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
+    pub async fn send_pre_commit_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending PreCommitVote message");
-        let pre_commit_vote_message = ConsensusMessage::new(
+        let pre_commit_vote_message = ConsensusMessage::<N, S, D, P, V>::new(
             ConsensusMessageType::PreCommit,
             self.name,
             self.view.clone(), 
-            MessagePayload::PreCommitVote(node_digest.clone()),
+            MessagePayload::<N, S, D, P, V>::PreCommitVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
