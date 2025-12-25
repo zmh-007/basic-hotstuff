@@ -8,7 +8,7 @@ use zkp::{Scalar, Digest as ZkpDigest};
 
 pub struct Aggregator<S: Scalar, D: ZkpDigest<S>> {
     committee: Committee,
-    new_view_aggregators: HashMap<(u64, u64), Box<NVMaker<S, D>>>,
+    new_view_aggregators: HashMap<View<S, D>, Box<NVMaker<S, D>>>,
 }
 
 impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
@@ -25,7 +25,7 @@ impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
 
         // Add the new vote to our aggregator and see if we have a QC.
         self.new_view_aggregators
-            .entry((view.height, view.round))
+            .entry(view)
             .or_insert_with(|| Box::new(NVMaker::new()))
             .append(author, qc, &self.committee)
     }
