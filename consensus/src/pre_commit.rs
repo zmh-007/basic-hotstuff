@@ -2,8 +2,9 @@ use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use serde::de::DeserializeOwned;
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {

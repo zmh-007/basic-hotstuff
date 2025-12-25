@@ -5,8 +5,9 @@ use crypto::{PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use serde::de::DeserializeOwned;
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     /// Send NewView message with current PrepareQC
     pub async fn send_new_view(&mut self) -> ConsensusResult<()> {
         info!("Sending NewView message");

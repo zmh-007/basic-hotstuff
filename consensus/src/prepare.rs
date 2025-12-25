@@ -6,8 +6,9 @@ use crate::{
 use crypto::{Digest, PublicKey};
 use log::{debug, error, info, warn};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use serde::de::DeserializeOwned;
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     pub async fn send_prepare(&mut self, high_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Sending Prepare message for view {}", self.view);
         

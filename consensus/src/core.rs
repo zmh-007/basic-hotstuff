@@ -19,8 +19,9 @@ use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use serde::de::DeserializeOwned;
 
-pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> {
+pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
     // Node identity and configuration
     pub name: PublicKey,
     pub committee: Committee,
@@ -50,7 +51,7 @@ pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S
     pub consecutive_timeouts: u64,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,

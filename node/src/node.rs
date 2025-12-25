@@ -4,6 +4,7 @@ use tokio::sync::mpsc::{channel, Receiver};
 // External crate imports
 use log::info;
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use serde::de::DeserializeOwned;
 
 // Internal crate imports
 use consensus::Consensus;
@@ -21,7 +22,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub async fn new<const N: usize, S: Scalar + 'static, D: ZkpDigest<S> + 'static, P: Proof<S> + 'static, V: Vk<N, S, P> + 'static>(
+    pub async fn new<const N: usize, S: Scalar + 'static, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned + 'static, V: Vk<N, S, P> + DeserializeOwned + 'static>(
         committee_file: &str,
         key_file: &str,
         store_path: &str,

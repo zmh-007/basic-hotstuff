@@ -16,7 +16,7 @@ use libp2p::PeerId;
 use log::{error, info};
 use network::P2pLibp2p;
 use replica::replica::ReplicaClient;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, sync::Arc};
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
@@ -103,7 +103,7 @@ pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>,
     Decide(QuorumCert<S, D>, String),
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> MessagePayload<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> MessagePayload<N, S, D, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         match self {
             Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
@@ -133,7 +133,7 @@ pub struct ConsensusMessage<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof
     pub signature: Signature,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> ConsensusMessage<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> ConsensusMessage<N, S, D, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         let mut elements = Vec::new();
         elements.push(self.msg_type.to_field());
@@ -174,7 +174,7 @@ pub struct Node<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N
     _phantom: PhantomData<(P, V)>,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> Node<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Node<N, S, D, P, V> {
     pub fn default() -> Self {
         Self {
             parent: Digest::default(), // Genesis node has no parent
@@ -189,7 +189,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> No
         } else {
             match decode(&self.blob) {
                 Ok(bytes) => {
-                    match Blk::<N, S, D, P, V>::dec(&mut bytes.into_iter()) {
+                    match bincode::deserialize::<Blk::<N, S, D, P, V>>(&bytes) {
                         Ok(blk) => blk.hash(),
                         Err(_) => {
                             error!("Failed to decode block from blob: {}", self.blob);
@@ -295,11 +295,11 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
     }
 }
 
-pub struct Consensus<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> {
+pub struct Consensus<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
     _phantom: PhantomData<(S, D, P, V)>,
 }
 
-impl<S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>, const N: usize> Consensus<N, S, D, P, V> {
+impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned, const N: usize> Consensus<N, S, D, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,

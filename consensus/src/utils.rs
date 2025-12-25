@@ -1,9 +1,9 @@
 use crypto::{Digest, PublicKey, Signature};
-
+use serde::de::DeserializeOwned;
 use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + 'static, P: Proof<S>, V: Vk<N, S, P>> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     pub fn check_is_leader(&self, view: &View<S, D>) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == self.name
