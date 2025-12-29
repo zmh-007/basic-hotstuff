@@ -8,7 +8,7 @@ edition = "2021"
 
 [workspace.dependencies]
 # External dependencies
-zkp = { path = "../zkp" }
+zkp = { package = "core", path = "../eon-crypto/core" }
 l0 = { path = "../l0" }
 blst = { git = "https://github.com/supranational/blst", branch = "master", features = ["serde", "serde-secret"] }
 tokio = { version = "1.48.0", features = ["sync", "macros", "rt-multi-thread", "time", "signal", "net", "rt", "full"] }
