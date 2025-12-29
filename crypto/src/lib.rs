@@ -1,18 +1,19 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
-
 // Standard library imports
 use std::convert::TryInto;
 use std::fmt;
-use hex;
 use std::marker::PhantomData;
 
 // External crate imports
+use hex::FromHex;
 use base64::{Engine as _, engine::general_purpose};
+use anyhow::Result;
 use rand::RngCore;
 use serde::{de, ser, Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use zkp::{Scalar, Digest as ZkpDigest};
+use zkp::{Scalar, Digest as ZkpDigest, AsScalars};
+use generic_array::GenericArray;
+use generic_array::typenum::Unsigned;
 
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
@@ -41,8 +42,7 @@ impl<S: Scalar, D: ZkpDigest<S>> Digest<S, D> {
     }
 
     pub fn to_field(&self) -> D {
-        D::from_hex(&self.value)
-            .expect("Digest bytes is not valid for conversion to Digest in ZKP")
+        digest_from_hex(&self.value).expect("Digest bytes is not valid for conversion to Digest in ZKP")
     }
 }
 
@@ -56,6 +56,14 @@ impl<S: Scalar, D: ZkpDigest<S>> fmt::Display for Digest<S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}", &self.value)
     }
+}
+
+pub fn digest_from_hex<S: Scalar, D: ZkpDigest<S> + AsScalars, T: AsRef<[u8]>>(hex: T) -> Result<D> {
+    let scalar_hex_len = S::BYTELEN::to_usize() * 2;
+    let vecs = hex.as_ref().chunks(scalar_hex_len).map(|v| {
+        Ok(S::from_bytes(GenericArray::try_from_iter(Vec::from_hex(v)?)?))
+    }).collect::<Result<Vec<S>>>()?;
+    Ok(D::from_scalars(GenericArray::try_from_iter(vecs)?))
 }
 
 /// Represents a public key (in bytes).

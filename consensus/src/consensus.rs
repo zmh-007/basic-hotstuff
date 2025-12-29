@@ -22,6 +22,7 @@ use store::Store;
 use tokio::sync::mpsc::{self, Sender};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
 use std::marker::PhantomData;
+use crate::utils::digest_to_hex;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct View<S: Scalar, D: ZkpDigest<S>> {
@@ -112,7 +113,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
             Self::Prepare(node, qc) => {
                 let elements = vec![node.digest().to_field().to_scalars(), qc.digest().to_field().to_scalars()].concat();
                 Digest {
-                    value: D::hash_from_scalars_with_padding(&elements).to_hex(),
+                    value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
                     _phantom: PhantomData,
                 }
             }
@@ -140,7 +141,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         elements.extend(self.view.digest().to_scalars());
         elements.extend(self.msg.digest().to_field().to_scalars());
         Digest {
-            value: D::hash_from_scalars_with_padding(&elements).to_hex(),
+            value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
             _phantom: PhantomData,
         }
     }
@@ -206,7 +207,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         
         let elements = vec![self.parent.to_field().to_scalars(), blob_digest.to_scalars()].concat();
         Digest {
-            value: D::hash_from_scalars_with_padding(&elements).to_hex(),
+            value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
             _phantom: PhantomData,
         }
     }
@@ -257,7 +258,7 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
         elements.extend(self.view.digest().to_scalars());
         elements.extend(self.node_digest.to_field().to_scalars());
         Digest {
-            value: D::hash_from_scalars_with_padding(&elements).to_hex(),
+            value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
             _phantom: PhantomData,
         }
     }

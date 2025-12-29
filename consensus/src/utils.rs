@@ -1,7 +1,12 @@
 use crypto::{Digest, PublicKey, Signature};
 use serde::de::DeserializeOwned;
 use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, AsScalars};
+use hex::ToHex;
+
+pub fn digest_to_hex<S: Scalar, D: ZkpDigest<S> + AsScalars>(digest: &D) -> String {
+    digest.to_scalars().into_iter().flat_map(|v| v.to_bytes()).collect::<Vec<u8>>().encode_hex()
+}
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
     pub fn check_is_leader(&self, view: &View<S, D>) -> bool {
