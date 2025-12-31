@@ -8,7 +8,6 @@ use crate::{
 };
 
 // External crates
-use blst::min_pk::AggregatePublicKey;
 use crypto::{Digest, PublicKey, SignatureService, Signature};
 use hex::decode;
 use l0::Blk;
@@ -280,13 +279,9 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
         }
 
         // Check the aggregated pk
-        let mut public_keys = Vec::with_capacity(self.public_keys.len());
-        for pk in self.public_keys.iter() {
-            public_keys.push(blst::min_pk::PublicKey::from_bytes(&pk.0).expect("Invalid public key bytes"));
-        }
-        let pks: Vec<_> = public_keys.iter().collect();
-        let aggregated_pk = AggregatePublicKey::aggregate(&pks, true).expect("failed to aggregate public keys");
-        if aggregated_pk.to_public_key().to_bytes() != self.agg_pk.0 {
+        let aggregated_pk = crate::utils::aggregate_public_keys(&self.public_keys)
+            .map_err(|_| ConsensusError::InvalidAggregatedPublicKey)?;
+        if aggregated_pk != self.agg_pk {
             return Err(ConsensusError::InvalidAggregatedPublicKey);
         }
 

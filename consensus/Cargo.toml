@@ -18,6 +18,7 @@ bytes = { workspace = true }
 thiserror = { workspace = true }
 hex = { workspace = true }
 libp2p = { workspace = true }
+anyhow = { workspace = true }
 
 store = { workspace = true }
 crypto = { workspace = true }

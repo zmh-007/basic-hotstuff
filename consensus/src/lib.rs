@@ -9,7 +9,7 @@ mod pre_commit;
 mod commit;
 mod decide;
 mod timer;
-mod utils;
+pub mod utils;
 mod aggregator;
 
 pub use crate::config::{Committee, Parameters};

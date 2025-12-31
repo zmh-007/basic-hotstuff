@@ -1,3 +1,4 @@
+use blst::min_pk::AggregatePublicKey;
 use crypto::{Digest, PublicKey, Signature};
 use serde::de::DeserializeOwned;
 use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
@@ -30,4 +31,19 @@ pub fn verify_signature(digest: &[u8], author: &PublicKey, sig: &Signature) -> C
         return Err(ConsensusError::InvalidSignature(author.to_string()));
     }
     Ok(())
+}
+
+pub fn aggregate_public_keys(public_keys: &[PublicKey]) -> anyhow::Result<PublicKey> {
+    if public_keys.is_empty() {
+        return Err(anyhow::anyhow!("Cannot aggregate empty public keys"));
+    }
+    let blst_keys: Vec<_> = public_keys.iter()
+        .map(|pk| blst::min_pk::PublicKey::from_bytes(&pk.0)
+            .map_err(|_| anyhow::anyhow!("Invalid public key bytes")))
+        .collect::<Result<_, _>>()?;
+    let pks: Vec<_> = blst_keys.iter().collect();
+    let aggregated_pk = AggregatePublicKey::aggregate(&pks, true)
+        .map_err(|e| anyhow::anyhow!("failed to aggregate public keys: {:?}", e))?;
+    let bytes = aggregated_pk.to_public_key().to_bytes();
+    Ok(PublicKey(bytes))
 }
