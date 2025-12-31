@@ -21,7 +21,7 @@ use store::Store;
 use tokio::sync::mpsc::{self, Sender};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, mockimpl::MockSignature};
 use std::marker::PhantomData;
-use crate::utils::digest_to_hex;
+use crate::utils::{aggregate_public_keys, digest_to_hex};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct View<S: Scalar, D: ZkpDigest<S>> {
@@ -279,7 +279,7 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
         }
 
         // Check the aggregated pk
-        let aggregated_pk = crate::utils::aggregate_public_keys(&self.public_keys)
+        let aggregated_pk = aggregate_public_keys(&self.public_keys)
             .map_err(|_| ConsensusError::InvalidAggregatedPublicKey)?;
         if aggregated_pk != self.agg_pk {
             return Err(ConsensusError::InvalidAggregatedPublicKey);
