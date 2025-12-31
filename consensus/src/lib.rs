@@ -1,5 +1,5 @@
 mod config;
-mod consensus;
+pub mod consensus;
 mod core;
 mod error;
 mod leader;
@@ -13,6 +13,6 @@ mod utils;
 mod aggregator;
 
 pub use crate::config::{Committee, Parameters};
-pub use crate::consensus::{Consensus, ConsensusMessage, QuorumCert};
+pub use crate::consensus::{Consensus, ConsensusMessage, ConsensusMessageType, QuorumCert, View, Node, MessagePayload};
 pub use crate::error::ConsensusError;
 pub use crate::leader::{LeaderElector};
