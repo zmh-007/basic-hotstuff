@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, sync::Arc};
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, mockimpl::MockSignature};
 use std::marker::PhantomData;
 use crate::utils::digest_to_hex;
 
@@ -190,7 +190,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         } else {
             match decode(&self.blob) {
                 Ok(bytes) => {
-                    match bincode::deserialize::<Blk::<N, S, D, P, V>>(&bytes) {
+                    match bincode::deserialize::<Blk::<N, S, MockSignature, D, P, V>>(&bytes) {
                         Ok(blk) => blk.hash(),
                         Err(_) => {
                             error!("Failed to decode block from blob: {}", self.blob);
