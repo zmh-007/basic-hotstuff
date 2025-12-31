@@ -59,7 +59,7 @@ impl<S: Scalar, D: ZkpDigest<S>> std::fmt::Debug for View<S, D> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy, Hash)]
 pub enum ConsensusMessageType {
     Prepare,
     PreCommit,
