@@ -30,7 +30,7 @@ pub enum ConsensusError {
     P2pNetworkError(#[from] P2pError),
 
     #[error("Serialization error: {0}")]
-    SerializationError(#[from] Box<bincode::ErrorKind>),
+    SerializationError(String),
 
     #[error("Store error: {0}")]
     StoreError(#[from] StoreError),

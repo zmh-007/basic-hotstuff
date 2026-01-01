@@ -189,7 +189,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         } else {
             match decode(&self.blob) {
                 Ok(bytes) => {
-                    match bincode::deserialize::<Blk::<N, S, MockSignature, D, P, V>>(&bytes) {
+                    match postcard::from_bytes::<Blk::<N, S, MockSignature, D, P, V>>(&bytes) {
                         Ok(blk) => blk.hash(),
                         Err(_) => {
                             error!("Failed to decode block from blob: {}", self.blob);
@@ -310,7 +310,7 @@ impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwn
         // Create and initialize the P2P network
         let mut p2p = P2pLibp2p::default();
         p2p.init(move |id, payload: Vec<u8>| {
-            let msg: ConsensusMessage<N, S, D, P, V> = bincode::deserialize(&payload)
+            let msg: ConsensusMessage<N, S, D, P, V> = postcard::from_bytes(&payload)
                 .expect("Failed to deserialize message from consensus module");
             if let Err(e) = msg_tx.send((id, msg)) {
                 error!("Failed to send message to consensus module: {}", e);

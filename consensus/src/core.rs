@@ -217,7 +217,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
     async fn restore_persistent_state(&mut self) {
         // Restore voted_node
         if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
-            if let Ok(voted_node) = bincode::deserialize::<Node<N, S, D, P, V>>(&voted_node_bytes) {
+            if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, P, V>>(&voted_node_bytes) {
                 self.voted_node = voted_node;
                 info!("Restored voted_node: {}", self.voted_node.digest());
             }
@@ -225,7 +225,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         
         // Restore prepare_qc
         if let Ok(Some(prepare_qc_bytes)) = self.store.read_prepare_qc().await {
-            if let Ok(prepare_qc) = bincode::deserialize::<QuorumCert<S, D>>(&prepare_qc_bytes) {
+            if let Ok(prepare_qc) = postcard::from_bytes::<QuorumCert<S, D>>(&prepare_qc_bytes) {
                 self.prepare_qc = prepare_qc;
                 info!("Restored prepare_qc for view: {}", self.prepare_qc.view);
             }
@@ -233,7 +233,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         
         // Restore lock_qc
         if let Ok(Some(lock_qc_bytes)) = self.store.read_lock_qc().await {
-            if let Ok(lock_qc) = bincode::deserialize::<QuorumCert<S, D>>(&lock_qc_bytes) {
+            if let Ok(lock_qc) = postcard::from_bytes::<QuorumCert<S, D>>(&lock_qc_bytes) {
                 self.lock_qc = lock_qc;
                 info!("Restored lock_qc for view: {}", self.lock_qc.view);
             }
@@ -247,19 +247,19 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
     }
     
     pub async fn persist_voted_node(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.voted_node) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.voted_node) {
             self.store.write_voted_node(bytes).await;
         }
     }
     
     pub async fn persist_prepare_qc(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.prepare_qc) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.prepare_qc) {
             self.store.write_prepare_qc(bytes).await;
         }
     }
     
     pub async fn persist_lock_qc(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.lock_qc) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.lock_qc) {
             self.store.write_lock_qc(bytes).await;
         }
     }

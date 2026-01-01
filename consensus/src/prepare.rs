@@ -40,8 +40,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
             self.signature_service.clone(),
         ).await;
 
-        let payload = bincode::serialize(&prepare_message)
-            .map_err(ConsensusError::SerializationError)?;
+        let payload = postcard::to_allocvec(&prepare_message)
+            .map_err(|e| ConsensusError::SerializationError(e.to_string()))?;
             
         debug!("Broadcasting Prepare message for view {}", self.view);
         self.network.send(None, payload)?;
@@ -154,7 +154,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
             self.signature_service.clone(),
         ).await;
 
-        match bincode::serialize(&prepare_vote_message) {
+        match postcard::to_allocvec(&prepare_vote_message) {
             Ok(payload) => {
                 let leader = self.leader_elector.get_leader(&self.view);
                 debug!("Sending PrepareVote {:?} to leader {:?}", node_digest, leader);
@@ -162,7 +162,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
                 debug!("PrepareVote message sent successfully");
             }
             Err(e) => {
-                return Err(ConsensusError::SerializationError(e));
+                return Err(ConsensusError::SerializationError(e.to_string()));
             }
         }
         Ok(())

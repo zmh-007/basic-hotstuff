@@ -24,7 +24,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         ).await;
         
         // Serialize the message
-        match bincode::serialize(&new_view_message) {
+        match postcard::to_allocvec(&new_view_message) {
             Ok(payload) => {
                 // send the message
                 let leader = self.leader_elector.get_leader(&self.view);
@@ -37,7 +37,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
                 debug!("NewView message sent successfully");
             }
             Err(e) => {
-                return Err(ConsensusError::SerializationError(e));
+                return Err(ConsensusError::SerializationError(e.to_string()));
             }
         }
         Ok(())

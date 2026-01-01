@@ -37,7 +37,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
             self.signature_service.clone(),
         ).await;
 
-         match bincode::serialize(&commit_vote_message) {
+         match postcard::to_allocvec(&commit_vote_message) {
                 Ok(payload) => {
                     // send the message to leader
                     let leader = self.leader_elector.get_leader(&self.view);
@@ -46,7 +46,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
                     debug!("Commit Vote message sent successfully");
                 }
                 Err(e) => {
-                 return Err(ConsensusError::SerializationError(e));
+                 return Err(ConsensusError::SerializationError(e.to_string()));
                 }
           }
         Ok(())
