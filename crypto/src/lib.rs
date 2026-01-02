@@ -4,7 +4,7 @@ use std::fmt;
 use std::marker::PhantomData;
 
 // External crate imports
-use hex::{FromHex, ToHex};
+use hex::FromHex;
 use base64::{Engine as _, engine::general_purpose};
 use anyhow::Result;
 use rand::RngCore;
@@ -30,7 +30,7 @@ pub struct Digest<S: Scalar, D: ZkpDigest<S>> {
 impl<S: Scalar, D: ZkpDigest<S>> Default for Digest<S, D> {
     fn default() -> Self {
         Digest {
-            value: digest_to_hex(&D::default()),
+            value: String::new(),
             _phantom: PhantomData,
         }
     }
@@ -59,10 +59,6 @@ impl<S: Scalar, D: ZkpDigest<S>> fmt::Display for Digest<S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "{}", &self.value)
     }
-}
-
-pub fn digest_to_hex<S: Scalar, D: ZkpDigest<S> + AsScalars>(digest: &D) -> String {
-    digest.to_scalars().into_iter().flat_map(|v| v.to_bytes()).collect::<Vec<u8>>().encode_hex()
 }
 
 pub fn digest_from_hex<S: Scalar, D: ZkpDigest<S> + AsScalars, T: AsRef<[u8]>>(hex: T) -> Result<D> {
