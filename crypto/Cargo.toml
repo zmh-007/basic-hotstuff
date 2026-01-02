@@ -13,3 +13,4 @@ rand = { workspace = true }
 hex = { workspace = true }
 generic-array = { workspace = true }
 anyhow = { workspace = true }
+log = { workspace = true }

@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 use zkp::{Scalar, Digest as ZkpDigest, AsScalars};
 use generic_array::GenericArray;
 use generic_array::typenum::Unsigned;
+use log::info;
 
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
@@ -42,6 +43,7 @@ impl<S: Scalar, D: ZkpDigest<S>> Digest<S, D> {
     }
 
     pub fn to_field(&self) -> D {
+        info!("Converting digest hex {} to Digest in ZKP", &self.value);
         digest_from_hex(&self.value).expect("Digest bytes is not valid for conversion to Digest in ZKP")
     }
 }
