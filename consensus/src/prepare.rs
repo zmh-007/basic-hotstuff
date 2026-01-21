@@ -5,10 +5,10 @@ use crate::{
 };
 use crypto::{Digest, PublicKey};
 use log::{debug, error, info, warn};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     pub async fn send_prepare(&mut self, high_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Sending Prepare message for view {}", self.view);
         
@@ -31,12 +31,12 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
             }
         };
 
-        let node = Node::<N, S, D, P, V>::new(high_qc.node_digest.clone(), blob);
-        let prepare_message = ConsensusMessage::<N, S, D, P, V>::new(
+        let node = Node::<N, S, D, U, P, V>::new(high_qc.node_digest.clone(), blob);
+        let prepare_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::Prepare,
             self.name,
             self.view.clone(),
-            MessagePayload::<N, S, D, P, V>::Prepare(node.clone(), high_qc.clone()),
+            MessagePayload::<N, S, D, U, P, V>::Prepare(node.clone(), high_qc.clone()),
             self.signature_service.clone(),
         ).await;
 
@@ -52,7 +52,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         &mut self,
         _author: PublicKey,
         view: View<S, D>,
-        node: Node<N, S, D, P, V>,
+        node: Node<N, S, D, U, P, V>,
         high_qc: QuorumCert<S, D>,
     ) -> ConsensusResult<()> {
         info!("Received Prepare for view {}", view);
@@ -66,7 +66,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
             return Ok(());
         }
         
-        if self.voted_node != Node::<N, S, D, P, V>::default() {
+        if self.voted_node != Node::<N, S, D, U, P, V>::default() {
             warn!(
                 "Already voted for view {} (node: {}), ignoring new Prepare (node: {})",
                 view, self.voted_node.digest(), node.digest()
@@ -106,7 +106,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         self.send_prepare_vote(node.digest()).await
     }
 
-    fn extend(&self, node: &Node<N, S, D, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {        
+    fn extend(&self, node: &Node<N, S, D, U, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {        
         if node.parent != high_qc.node_digest {
             return Err(ConsensusError::InvalidQC(
                 format!("expect parent {:?}, got {:?}", high_qc.node_digest, node.parent)
@@ -115,7 +115,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         Ok(())
     }
 
-    fn safe_node(&self, node: &Node<N, S, D, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {
+    fn safe_node(&self, node: &Node<N, S, D, U, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {
         if self.lock_qc == QuorumCert::<S, D>::default() {
             debug!("No lock QC (genesis), node is safe");
             return Ok(());
@@ -146,11 +146,11 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
 
     pub async fn send_prepare_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending PrepareVote message");
-        let prepare_vote_message = ConsensusMessage::<N, S, D, P, V>::new(
+        let prepare_vote_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::Prepare,
             self.name,
             self.view.clone(), 
-            MessagePayload::<N, S, D, P, V>::PrepareVote(node_digest.clone()),
+            MessagePayload::<N, S, D, U, P, V>::PrepareVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 

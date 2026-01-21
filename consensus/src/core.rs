@@ -18,10 +18,10 @@ use replica::replica::ReplicaClientApi;
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
 
-pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
+pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
     // Node identity and configuration
     pub name: PublicKey,
     pub committee: Committee,
@@ -34,7 +34,7 @@ pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 
     pub replica_client: Arc<dyn ReplicaClientApi>,
     
     // I/O channels
-    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, P, V>)>,
+    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, U, P, V>)>,
     pub tx_commit: Sender<String>,
     pub network: P2pLibp2p,
     
@@ -44,14 +44,14 @@ pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 
     
     // Consensus state
     pub view: View<S, D>,
-    pub voted_node: Node<N, S, D, P, V>,
+    pub voted_node: Node<N, S, D, U, P, V>,
     pub prepare_qc: QuorumCert<S, D>,
     pub lock_qc: QuorumCert<S, D>,
     pub lock_blob: String,
     pub consecutive_timeouts: u64,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
@@ -60,7 +60,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         leader_elector: LeaderElector,
         store: Store,
         parameters: Parameters,
-        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, P, V>)>,
+        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, U, P, V>)>,
         network: P2pLibp2p,
         tx_commit: Sender<String>,
         replica_client: Arc<dyn ReplicaClientApi>,
@@ -120,7 +120,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         }
     }
 
-    fn check_consensus_message(&self, _: &ConsensusMessage<N, S, D, P, V>) -> ConsensusResult<()> {
+    fn check_consensus_message(&self, _: &ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
         //TODO: already checked in network layer
         // if !self.committee.authorities.contains_key(&message.author) {
         //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
@@ -131,7 +131,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
         Ok(())
     }
 
-    async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, P, V>) -> ConsensusResult<()> {
+    async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
         use crate::consensus::ConsensusMessageType as MsgType;
         
         match (message.msg_type, message.msg) {
@@ -217,7 +217,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P:
     async fn restore_persistent_state(&mut self) {
         // Restore voted_node
         if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
-            if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, P, V>>(&voted_node_bytes) {
+            if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, U, P, V>>(&voted_node_bytes) {
                 self.voted_node = voted_node;
                 info!("Restored voted_node: {}", self.voted_node.digest());
             }

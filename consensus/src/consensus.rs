@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashSet, sync::Arc};
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, mockimpl::MockSignature};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256, mockimpl::MockSignature};
 use std::marker::PhantomData;
 use crate::utils::{aggregate_public_keys, digest_to_hex};
 
@@ -91,10 +91,10 @@ impl ConsensusMessageType {
 
 /// MessagePayload represents the different types of message content
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(bound = "S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>")]
-pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> {
+#[serde(bound = "S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>")]
+pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>> {
     NewView(QuorumCert<S, D>),
-    Prepare(Node<N, S, D, P, V>, QuorumCert<S, D>),
+    Prepare(Node<N, S, D, U, P, V>, QuorumCert<S, D>),
     PrepareVote(Digest<S, D>),
     PreCommit(QuorumCert<S, D>),
     PreCommitVote(Digest<S, D>),
@@ -103,7 +103,7 @@ pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>,
     Decide(QuorumCert<S, D>, String),
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> MessagePayload<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> MessagePayload<N, S, D, U, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         match self {
             Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
@@ -124,16 +124,16 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(bound = "S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>")]
-pub struct ConsensusMessage<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> {
+#[serde(bound = "S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>")]
+pub struct ConsensusMessage<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>> {
     pub msg_type: ConsensusMessageType,
     pub author: PublicKey,
     pub view: View<S, D>,
-    pub msg: MessagePayload<N, S, D, P, V>,
+    pub msg: MessagePayload<N, S, D, U, P, V>,
     pub signature: Signature,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> ConsensusMessage<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> ConsensusMessage<N, S, D, U, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         let mut elements = Vec::new();
         elements.push(self.msg_type.to_field());
@@ -149,7 +149,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         msg_type: ConsensusMessageType,
         author: PublicKey,
         view: View<S, D>,
-        msg: MessagePayload<N, S, D, P, V>,
+        msg: MessagePayload<N, S, D, U, P, V>,
         mut signature_service: SignatureService<S, D>,
     ) -> Self {
         let message = Self {
@@ -166,15 +166,15 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(bound = "S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>")]
-pub struct Node<const N: usize, S: Scalar, D: ZkpDigest<S>, P: Proof<S>, V: Vk<N, S, P>> {
+#[serde(bound = "S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>")]
+pub struct Node<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>> {
     pub parent: Digest<S, D>,
     pub blob: String,
     #[serde(skip)]
-    _phantom: PhantomData<(P, V)>,
+    _phantom: PhantomData<(U, P, V)>,
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Node<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Node<N, S, D, U, P, V> {
     pub fn default() -> Self {
         Self {
             parent: Digest::default(), // Genesis node has no parent
@@ -189,7 +189,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> 
         } else {
             match decode(&self.blob) {
                 Ok(bytes) => {
-                    match postcard::from_bytes::<Blk::<N, S, MockSignature, D, P, V>>(&bytes) {
+                    match postcard::from_bytes::<Blk::<N, S, MockSignature, D, U, P, V>>(&bytes) {
                         Ok(blk) => blk.hash(),
                         Err(_) => {
                             error!("Failed to decode block from blob: {}", self.blob);
@@ -291,11 +291,11 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
     }
 }
 
-pub struct Consensus<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
-    _phantom: PhantomData<(S, D, P, V)>,
+pub struct Consensus<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
+    _phantom: PhantomData<(S, D, U, P, V)>,
 }
 
-impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned, const N: usize> Consensus<N, S, D, P, V> {
+impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned, const N: usize> Consensus<N, S, D, U, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
@@ -305,12 +305,12 @@ impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, P: Proof<S> + DeserializeOwn
         store: Store,
         tx_commit: Sender<String>,
     ) { 
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<(PeerId, ConsensusMessage<N, S, D, P, V>)>();
+        let (msg_tx, msg_rx) = mpsc::unbounded_channel::<(PeerId, ConsensusMessage<N, S, D, U, P, V>)>();
 
         // Create and initialize the P2P network
         let mut p2p = P2pLibp2p::default();
         p2p.init(move |id, payload: Vec<u8>| {
-            let msg: ConsensusMessage<N, S, D, P, V> = postcard::from_bytes(&payload)
+            let msg: ConsensusMessage<N, S, D, U, P, V> = postcard::from_bytes(&payload)
                 .expect("Failed to deserialize message from consensus module");
             if let Err(e) = msg_tx.send((id, msg)) {
                 error!("Failed to send message to consensus module: {}", e);

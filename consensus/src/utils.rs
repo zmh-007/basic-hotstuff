@@ -2,21 +2,21 @@ use blst::min_pk::AggregatePublicKey;
 use crypto::{Digest, PublicKey, Signature};
 use serde::de::DeserializeOwned;
 use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, AsScalars};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, AsScalars, SafeU256};
 use hex::ToHex;
 
 pub fn digest_to_hex<S: Scalar, D: ZkpDigest<S> + AsScalars>(digest: &D) -> String {
     digest.to_scalars().into_iter().flat_map(|v| v.to_bytes()).collect::<Vec<u8>>().encode_hex()
 }
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     pub fn check_is_leader(&self, view: &View<S, D>) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == self.name
     }
 
     pub fn check_node(&self, node_digest: &Digest<S, D>) -> bool {
-        self.voted_node != Node::<N, S, D, P, V>::default() && self.voted_node.digest() == *node_digest
+        self.voted_node != Node::<N, S, D, U, P, V>::default() && self.voted_node.digest() == *node_digest
     }
 }
 

@@ -2,10 +2,10 @@ use crypto::{PublicKey};
 use log::{info, error};
 use tokio::time;
 use crate::{QuorumCert, consensus::{ConsensusMessageType, View}, core::Core, error::ConsensusResult, timer::Timer};
-use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
 
-impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, P, V> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     pub async fn handle_decide(&mut self, _: PublicKey, view: View<S, D>, commit_qc: QuorumCert<S, D>, wp_blk: String) -> ConsensusResult<()> {
         info!("Received Decide for view {:?}", view);
         if commit_qc.qc_type != ConsensusMessageType::Commit {

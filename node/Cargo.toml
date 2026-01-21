@@ -5,6 +5,7 @@ edition = { workspace = true }
 
 [dependencies]
 l0 = { workspace = true }
+eon-u256 = { workspace = true }
 blst = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
