@@ -20,6 +20,7 @@ use store::Store;
 use tokio::sync::mpsc::{self, Sender};
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
+use crate::utils::verify_signature;
 
 pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
     // Node identity and configuration
@@ -120,14 +121,26 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         }
     }
 
-    fn check_consensus_message(&self, _: &ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
-        //TODO: already checked in network layer
-        // if !self.committee.authorities.contains_key(&message.author) {
-        //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
-        //     return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
-        // }
+    fn check_consensus_message(&self, message: &ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
+        use crate::consensus::ConsensusMessageType as MsgType;
+        
+        // PreCommit, Commit, Decide messages are sent by external Leader service (not a committee member)
+        // Their security is guaranteed by QC verification, not sender signature
+        match message.msg_type {
+            MsgType::PreCommit | MsgType::Commit | MsgType::Decide => {
+                // Skip committee membership and signature verification for external Leader messages
+                return Ok(());
+            }
+            _ => {}
+        }
+        
+        // For NewView and Prepare messages, verify committee membership and signature
+        if !self.committee.authorities.contains_key(&message.author) {
+            error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
+            return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
+        }
 
-        // verify_signature(&message.digest(), &message.author, &message.signature)?;
+        verify_signature(&message.digest().to_vec(), &message.author, &message.signature)?;
         Ok(())
     }
 
@@ -147,8 +160,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             (MsgType::Commit, MessagePayload::Commit(qc)) => {
                 self.handle_commit(message.author, message.view, qc).await
             }
-            (MsgType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
-                self.handle_decide(message.author, message.view, qc, wp_blk).await
+            (MsgType::Decide, MessagePayload::Decide(qc, node)) => {
+                self.handle_decide(message.author, message.view, qc, node).await
             }
             _ => {
                 error!(

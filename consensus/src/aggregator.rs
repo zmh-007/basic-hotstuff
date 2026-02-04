@@ -12,6 +12,9 @@ pub struct Aggregator<S: Scalar, D: ZkpDigest<S>> {
 }
 
 impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
+    /// Maximum number of future heights to accept NewView messages for
+    const MAX_FUTURE_HEIGHTS: u64 = 10;
+
     pub fn new(committee: Committee) -> Self {
         Self {
             committee,
@@ -19,9 +22,16 @@ impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
         }
     }
 
-    pub fn add_new_view(&mut self, author: PublicKey, view: View<S, D>, qc: QuorumCert<S, D>) -> ConsensusResult<Option<QuorumCert<S, D>>> {
-        // TODO: A bad node may make us run out of memory by sending many votes
-        // with different view numbers.
+    pub fn add_new_view(&mut self, current_height: u64, author: PublicKey, view: View<S, D>, qc: QuorumCert<S, D>) -> ConsensusResult<Option<QuorumCert<S, D>>> {
+        // Reject views too far in the future to prevent memory exhaustion attack
+        if view.height > current_height + Self::MAX_FUTURE_HEIGHTS {
+            return Err(ConsensusError::ViewTooFarInFuture(view.height, current_height));
+        }
+        
+        // Silently ignore stale views (already committed heights)
+        if view.height < current_height {
+            return Ok(None);
+        }
 
         // Add the new vote to our aggregator and see if we have a QC.
         self.new_view_aggregators
@@ -30,8 +40,10 @@ impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
             .append(author, qc, &self.committee)
     }
 
-    pub fn cleanup(&mut self) {
-        self.new_view_aggregators.clear();
+    /// Cleanup stale views that are below the current height.
+    /// This preserves aggregators for current and future views.
+    pub fn cleanup(&mut self, current_height: u64) {
+        self.new_view_aggregators.retain(|view, _| view.height >= current_height);
     }
 }
 

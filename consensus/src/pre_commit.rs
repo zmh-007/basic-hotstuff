@@ -5,7 +5,7 @@ use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
-    pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
+    pub async fn handle_pre_commit(&mut self, _author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {
             error!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
@@ -13,6 +13,10 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         }
         if prepare_qc.qc_type != ConsensusMessageType::Prepare {
             error!("Received PreCommit with invalid QC type: {:?}", prepare_qc.qc_type);
+            return Ok(());
+        }
+        if prepare_qc.view != view {
+            error!("PreCommit QC view mismatch: expected {:?}, got {:?}", view, prepare_qc.view);
             return Ok(());
         }
         if !self.check_node(&prepare_qc.node_digest) {

@@ -50,7 +50,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
     pub async fn handle_prepare(
         &mut self,
-        _author: PublicKey,
+        author: PublicKey,
         view: View<S, D>,
         node: Node<N, S, D, U, P, V>,
         high_qc: QuorumCert<S, D>,
@@ -58,6 +58,13 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         info!("Received Prepare for view {}", view);
         if view != self.view {
             debug!("Ignoring Prepare for view {} (current: {})", view, self.view);
+            return Ok(());
+        }
+        
+        // Verify the sender is the leader for this view
+        let expected_leader = self.leader_elector.get_leader(&view);
+        if author != expected_leader {
+            error!("Received Prepare from non-leader: {:?}, expected: {:?}", author, expected_leader);
             return Ok(());
         }
         
