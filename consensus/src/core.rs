@@ -46,6 +46,7 @@ pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 
     // Consensus state
     pub view: View<S, D>,
     pub voted_node: Node<N, S, D, U, P, V>,
+    pub voted_view: View<S, D>,  // The view in which voted_node was set
     pub prepare_qc: QuorumCert<S, D>,
     pub lock_qc: QuorumCert<S, D>,
     pub lock_blob: String,
@@ -83,6 +84,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
                 view: View::default(),
                 voted_node: Node::default(),
+                voted_view: View::default(),
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
                 lock_blob: String::new(),
@@ -160,8 +162,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             (MsgType::Commit, MessagePayload::Commit(qc)) => {
                 self.handle_commit(message.author, message.view, qc).await
             }
-            (MsgType::Decide, MessagePayload::Decide(qc, node)) => {
-                self.handle_decide(message.author, message.view, qc, node).await
+            (MsgType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
+                self.handle_decide(message.author, message.view, qc, wp_blk).await
             }
             _ => {
                 error!(
@@ -175,6 +177,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
     #[async_recursion]
     pub async fn start_new_round(&mut self, round: u64) {
+        self.view.round = round;
+        
         // Get proposal from replica to determine height
         let height = match self.fetch_and_parse_proposal().await {
             Some((_, height)) => height,
@@ -186,9 +190,14 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
         // Update view state
         self.view.height = height;
-        self.view.round = round;
-        self.voted_node = Node::default();
-        self.persist_voted_node().await;
+        
+        // Reset voted_node if view has changed from the view where we voted
+        if self.view != self.voted_view {
+            self.voted_node = Node::default();
+            self.voted_view = View::default();
+            self.persist_voted_state().await;
+        }
+        
         self.timer.reset();
         
         info!("Starting new view: {}", self.view);
@@ -228,11 +237,19 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     
     // Persistence methods
     async fn restore_persistent_state(&mut self) {
-        // Restore voted_node
-        if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
-            if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, U, P, V>>(&voted_node_bytes) {
-                self.voted_node = voted_node;
-                info!("Restored voted_node: {}", self.voted_node.digest());
+        // Restore voted_view first
+        if let Ok(Some(voted_view_bytes)) = self.store.read_voted_view().await {
+            if let Ok(voted_view) = postcard::from_bytes::<View<S, D>>(&voted_view_bytes) {
+                self.voted_view = voted_view;
+                info!("Restored voted_view: {}", self.voted_view);
+                
+                // Only restore voted_node if voted_view was successfully restored
+                if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
+                    if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, U, P, V>>(&voted_node_bytes) {
+                        self.voted_node = voted_node;
+                        info!("Restored voted_node: {}", self.voted_node.digest());
+                    }
+                }
             }
         }
         
@@ -259,9 +276,12 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         }
     }
     
-    pub async fn persist_voted_node(&mut self) {
+    pub async fn persist_voted_state(&mut self) {
         if let Ok(bytes) = postcard::to_allocvec(&self.voted_node) {
             self.store.write_voted_node(bytes).await;
+        }
+        if let Ok(bytes) = postcard::to_allocvec(&self.voted_view) {
+            self.store.write_voted_view(bytes).await;
         }
     }
     

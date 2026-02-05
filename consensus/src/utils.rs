@@ -16,7 +16,9 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     }
 
     pub fn check_node(&self, node_digest: &Digest<S, D>) -> bool {
-        self.voted_node != Node::<N, S, D, U, P, V>::default() && self.voted_node.digest() == *node_digest
+        self.voted_node != Node::<N, S, D, U, P, V>::default() 
+            && self.voted_view == self.view
+            && self.voted_node.digest() == *node_digest
     }
 }
 

@@ -100,21 +100,14 @@ pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<
     PreCommitVote(Digest<S, D>),
     Commit(QuorumCert<S, D>),
     CommitVote(Digest<S, D>),
-    Decide(QuorumCert<S, D>, Node<N, S, D, U, P, V>),
+    Decide(QuorumCert<S, D>, String),
 }
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> MessagePayload<N, S, D, U, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         match self {
-            Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) => {
+            Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
                 qc.digest()
-            }
-            Self::Decide(qc, node) => {
-                let elements = vec![qc.digest().to_field().to_scalars(), node.digest().to_field().to_scalars()].concat();
-                Digest {
-                    value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
-                    _phantom: PhantomData,
-                }
             }
             Self::Prepare(node, qc) => {
                 let elements = vec![node.digest().to_field().to_scalars(), qc.digest().to_field().to_scalars()].concat();

@@ -58,6 +58,13 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return Ok(());
         }
         if prepare_qc != QuorumCert::default() {
+            let qc_view = (prepare_qc.view.height, prepare_qc.view.round);
+            let current_view = (view.height, view.round);
+            if qc_view >= current_view {
+                error!("Received NewView with prepare_qc.view {:?} >= current view {:?}", 
+                       prepare_qc.view, view);
+                return Ok(());
+            }
             prepare_qc.verify(&self.committee)?;
         }
         

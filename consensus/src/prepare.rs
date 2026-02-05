@@ -73,7 +73,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return Ok(());
         }
         
-        if self.voted_node != Node::<N, S, D, U, P, V>::default() {
+        // Check if we already voted in this view
+        if self.voted_node != Node::<N, S, D, U, P, V>::default() && self.voted_view == view {
             warn!(
                 "Already voted for view {} (node: {}), ignoring new Prepare (node: {})",
                 view, self.voted_node.digest(), node.digest()
@@ -109,7 +110,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         self.safe_node(&node, &high_qc)?;
         
         self.voted_node = node.clone();
-        self.persist_voted_node().await;
+        self.voted_view = view.clone();
+        self.persist_voted_state().await;
         self.send_prepare_vote(node.digest()).await
     }
 
