@@ -69,9 +69,6 @@ pub enum ConsensusError {
     #[error("invalid aggregated public key")]
     InvalidAggregatedPublicKey,
 
-    #[error("View height {0} is too far in the future (current: {1})")]
-    ViewTooFarInFuture(u64, u64),
-
     #[error("Stale decide for height {0} (current: {1})")]
     StaleDecide(u64, u64),
 }

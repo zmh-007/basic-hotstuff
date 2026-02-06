@@ -69,7 +69,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         }
         
         // Try to add the new view to aggregator
-        if let Some(high_qc) = self.aggregator.add_new_view(self.view.height, author, view.clone(), prepare_qc)? {
+        if let Some(high_qc) = self.aggregator.add_new_view(author, view.clone(), prepare_qc)? {
             // Threshold reached, we have enough NewView messages
             debug!("NewView threshold reached for view {:?}, got high QC with view {:?}", 
                    view, high_qc.view);

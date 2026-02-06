@@ -79,7 +79,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + AsScalars + DeserializeOwned +
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
         let new_height = commit_qc.view.height + 1;
-        self.aggregator.cleanup(new_height);
+        self.aggregator.cleanup();
         self.unlock_blob().await;
         self.view.height = new_height;
         self.consecutive_timeouts = 0;
