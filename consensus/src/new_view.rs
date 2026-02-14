@@ -4,8 +4,10 @@ use crate::error::ConsensusResult;
 use crypto::{PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
 
-impl Core {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     /// Send NewView message with current PrepareQC
     pub async fn send_new_view(&mut self) -> ConsensusResult<()> {
         info!("Sending NewView message");
@@ -13,35 +15,35 @@ impl Core {
         let prepare_qc = self.prepare_qc.clone();
         
         // Create the NewView message with current view, high QC and signature service
-        let new_view_message = ConsensusMessage::new(
+        let new_view_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::NewView,
             self.name,
             self.view.clone(), 
-            MessagePayload::NewView(prepare_qc.clone()),
+            MessagePayload::<N, S, D, U, P, V>::NewView(prepare_qc.clone()),
             self.signature_service.clone(),
         ).await;
         
         // Serialize the message
-        match bincode::serialize(&new_view_message) {
+        match postcard::to_allocvec(&new_view_message) {
             Ok(payload) => {
                 // send the message
                 let leader = self.leader_elector.get_leader(&self.view);
                 if leader == self.name {
                     self.handle_new_view(self.name, self.view.clone(), prepare_qc.clone()).await?;
                 } else {
-                    debug!("Sending {:?} to {}", new_view_message, leader);
+                    debug!("Sending new_view_message, view: {:?} to {}", new_view_message.view, leader);
                     self.network.send(None, payload)?;
                 }
                 debug!("NewView message sent successfully");
             }
             Err(e) => {
-                return Err(ConsensusError::SerializationError(e));
+                return Err(ConsensusError::SerializationError(e.to_string()));
             }
         }
         Ok(())
     }
 
-    pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+    pub async fn handle_new_view(&mut self, author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received NewView for view {:?} from {:?}", view, author);
         if view != self.view {
             error!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
@@ -56,6 +58,13 @@ impl Core {
             return Ok(());
         }
         if prepare_qc != QuorumCert::default() {
+            let qc_view = (prepare_qc.view.height, prepare_qc.view.round);
+            let current_view = (view.height, view.round);
+            if qc_view >= current_view {
+                error!("Received NewView with prepare_qc.view {:?} >= current view {:?}", 
+                       prepare_qc.view, view);
+                return Ok(());
+            }
             prepare_qc.verify(&self.committee)?;
         }
         

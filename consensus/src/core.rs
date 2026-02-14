@@ -18,21 +18,24 @@ use replica::replica::ReplicaClientApi;
 use std::sync::Arc;
 use store::Store;
 use tokio::sync::mpsc::{self, Sender};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
+use crate::utils::verify_signature;
 
-pub struct Core {
+pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> {
     // Node identity and configuration
     pub name: PublicKey,
     pub committee: Committee,
     pub parameters: Parameters,
     
     // Core services
-    pub signature_service: SignatureService,
+    pub signature_service: SignatureService<S, D>,
     pub leader_elector: LeaderElector,
-    pub aggregator: Aggregator,
+    pub aggregator: Aggregator<S, D>,
     pub replica_client: Arc<dyn ReplicaClientApi>,
     
     // I/O channels
-    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+    pub msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, U, P, V>)>,
     pub tx_commit: Sender<String>,
     pub network: P2pLibp2p,
     
@@ -41,24 +44,25 @@ pub struct Core {
     pub timer: Timer,
     
     // Consensus state
-    pub view: View,
-    pub voted_node: Node,
-    pub prepare_qc: QuorumCert,
-    pub lock_qc: QuorumCert,
+    pub view: View<S, D>,
+    pub voted_node: Node<N, S, D, U, P, V>,
+    pub voted_view: View<S, D>,  // The view in which voted_node was set
+    pub prepare_qc: QuorumCert<S, D>,
+    pub lock_qc: QuorumCert<S, D>,
     pub lock_blob: String,
     pub consecutive_timeouts: u64,
 }
 
-impl Core {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         name: PublicKey,
         committee: Committee,
-        signature_service: SignatureService,
+        signature_service: SignatureService<S, D>,
         leader_elector: LeaderElector,
         store: Store,
         parameters: Parameters,
-        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage)>,
+        msg_rx: mpsc::UnboundedReceiver<(PeerId, ConsensusMessage<N, S, D, U, P, V>)>,
         network: P2pLibp2p,
         tx_commit: Sender<String>,
         replica_client: Arc<dyn ReplicaClientApi>,
@@ -80,6 +84,7 @@ impl Core {
 
                 view: View::default(),
                 voted_node: Node::default(),
+                voted_view: View::default(),
                 prepare_qc: QuorumCert::default(),
                 lock_qc: QuorumCert::default(),
                 lock_blob: String::new(),
@@ -118,18 +123,30 @@ impl Core {
         }
     }
 
-    fn check_consensus_message(&self, _: &ConsensusMessage) -> ConsensusResult<()> {
-        //TODO: already checked in network layer
-        // if !self.committee.authorities.contains_key(&message.author) {
-        //     error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
-        //     return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
-        // }
+    fn check_consensus_message(&self, message: &ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
+        use crate::consensus::ConsensusMessageType as MsgType;
+        
+        // PreCommit, Commit, Decide messages are sent by external Leader service (not a committee member)
+        // Their security is guaranteed by QC verification, not sender signature
+        match message.msg_type {
+            MsgType::PreCommit | MsgType::Commit | MsgType::Decide => {
+                // Skip committee membership and signature verification for external Leader messages
+                return Ok(());
+            }
+            _ => {}
+        }
+        
+        // For NewView and Prepare messages, verify committee membership and signature
+        if !self.committee.authorities.contains_key(&message.author) {
+            error!("Received {:?} message from unknown author: {:?}", message.msg_type.to_string(), message.author);
+            return Err(crate::ConsensusError::NotInCommittee(message.author.encode_base64()));
+        }
 
-        // verify_signature(&message.digest(), &message.author, &message.signature)?;
+        verify_signature(&message.digest().to_vec(), &message.author, &message.signature)?;
         Ok(())
     }
 
-    async fn handle_consensus_message(&mut self, message: ConsensusMessage) -> ConsensusResult<()> {
+    async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
         use crate::consensus::ConsensusMessageType as MsgType;
         
         match (message.msg_type, message.msg) {
@@ -160,6 +177,8 @@ impl Core {
 
     #[async_recursion]
     pub async fn start_new_round(&mut self, round: u64) {
+        self.view.round = round;
+        
         // Get proposal from replica to determine height
         let height = match self.fetch_and_parse_proposal().await {
             Some((_, height)) => height,
@@ -170,9 +189,15 @@ impl Core {
         };
 
         // Update view state
-        self.view = View { height, round };
-        self.voted_node = Node::default();
-        self.persist_voted_node().await;
+        self.view.height = height;
+        
+        // Reset voted_node if view has changed from the view where we voted
+        if self.view != self.voted_view {
+            self.voted_node = Node::default();
+            self.voted_view = View::default();
+            self.persist_voted_state().await;
+        }
+        
         self.timer.reset();
         
         info!("Starting new view: {}", self.view);
@@ -212,17 +237,25 @@ impl Core {
     
     // Persistence methods
     async fn restore_persistent_state(&mut self) {
-        // Restore voted_node
-        if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
-            if let Ok(voted_node) = bincode::deserialize::<Node>(&voted_node_bytes) {
-                self.voted_node = voted_node;
-                info!("Restored voted_node: {}", self.voted_node.digest());
+        // Restore voted_view first
+        if let Ok(Some(voted_view_bytes)) = self.store.read_voted_view().await {
+            if let Ok(voted_view) = postcard::from_bytes::<View<S, D>>(&voted_view_bytes) {
+                self.voted_view = voted_view;
+                info!("Restored voted_view: {}", self.voted_view);
+                
+                // Only restore voted_node if voted_view was successfully restored
+                if let Ok(Some(voted_node_bytes)) = self.store.read_voted_node().await {
+                    if let Ok(voted_node) = postcard::from_bytes::<Node<N, S, D, U, P, V>>(&voted_node_bytes) {
+                        self.voted_node = voted_node;
+                        info!("Restored voted_node: {}", self.voted_node.digest());
+                    }
+                }
             }
         }
         
         // Restore prepare_qc
         if let Ok(Some(prepare_qc_bytes)) = self.store.read_prepare_qc().await {
-            if let Ok(prepare_qc) = bincode::deserialize::<QuorumCert>(&prepare_qc_bytes) {
+            if let Ok(prepare_qc) = postcard::from_bytes::<QuorumCert<S, D>>(&prepare_qc_bytes) {
                 self.prepare_qc = prepare_qc;
                 info!("Restored prepare_qc for view: {}", self.prepare_qc.view);
             }
@@ -230,7 +263,7 @@ impl Core {
         
         // Restore lock_qc
         if let Ok(Some(lock_qc_bytes)) = self.store.read_lock_qc().await {
-            if let Ok(lock_qc) = bincode::deserialize::<QuorumCert>(&lock_qc_bytes) {
+            if let Ok(lock_qc) = postcard::from_bytes::<QuorumCert<S, D>>(&lock_qc_bytes) {
                 self.lock_qc = lock_qc;
                 info!("Restored lock_qc for view: {}", self.lock_qc.view);
             }
@@ -243,20 +276,23 @@ impl Core {
         }
     }
     
-    pub async fn persist_voted_node(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.voted_node) {
+    pub async fn persist_voted_state(&mut self) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.voted_node) {
             self.store.write_voted_node(bytes).await;
+        }
+        if let Ok(bytes) = postcard::to_allocvec(&self.voted_view) {
+            self.store.write_voted_view(bytes).await;
         }
     }
     
     pub async fn persist_prepare_qc(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.prepare_qc) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.prepare_qc) {
             self.store.write_prepare_qc(bytes).await;
         }
     }
     
     pub async fn persist_lock_qc(&mut self) {
-        if let Ok(bytes) = bincode::serialize(&self.lock_qc) {
+        if let Ok(bytes) = postcard::to_allocvec(&self.lock_qc) {
             self.store.write_lock_qc(bytes).await;
         }
     }

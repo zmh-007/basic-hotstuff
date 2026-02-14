@@ -1,69 +1,72 @@
-// Copyright(C) Facebook, Inc. and its affiliates.
-
 // Standard library imports
-use std::array::TryFromSliceError;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::fmt;
+use std::marker::PhantomData;
 
 // External crate imports
+use hex::FromHex;
 use base64::{Engine as _, engine::general_purpose};
+use anyhow::Result;
 use rand::RngCore;
 use serde::{de, ser, Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use zk::{AsBytes, Fr, ToHash};
+use zkp::{Scalar, Digest as ZkpDigest, AsScalars};
+use generic_array::GenericArray;
+use generic_array::typenum::Unsigned;
 
 #[cfg(test)]
 #[path = "tests/crypto_tests.rs"]
 pub mod crypto_tests;
 
-/// Represents a hash digest (32 bytes).
-#[derive(Hash, PartialEq, Default, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd, Copy)]
-pub struct Digest(pub [u8; 32]);
+/// Represents a hash digest in hex string
+#[derive(Hash, PartialEq, Eq, Clone, Deserialize, Serialize, Ord, PartialOrd)]
+pub struct Digest<S: Scalar, D: ZkpDigest<S>> {
+    pub value: String,
+    #[serde(skip)]
+    pub _phantom: PhantomData<(S, D)>,
+}
 
-impl Digest {
+impl<S: Scalar, D: ZkpDigest<S>> Default for Digest<S, D> {
+    fn default() -> Self {
+        Digest {
+            value: String::new(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<S: Scalar, D: ZkpDigest<S>> Digest<S, D> {
     pub fn to_vec(&self) -> Vec<u8> {
-        self.0.to_vec()
+        hex::decode(&self.value).expect("Digest string should be valid hex")
     }
 
-    pub fn size(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn to_field(&self) -> Fr {
-        Fr::dec(&mut self.to_vec().into_iter())
-            .expect("Digest bytes should always be valid for Fr conversion")
+    pub fn to_field(&self) -> D {
+        if self.value.is_empty() {
+            return D::default();
+        }
+        digest_from_hex(&self.value).expect("Digest bytes is not valid for conversion to Digest in ZKP")
     }
 }
 
-impl fmt::Debug for Digest {
+impl<S: Scalar, D: ZkpDigest<S>> fmt::Debug for Digest<S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", general_purpose::STANDARD.encode(&self.0))
+        write!(f, "{}", &self.value)
     }
 }
 
-impl fmt::Display for Digest {
+impl<S: Scalar, D: ZkpDigest<S>> fmt::Display for Digest<S, D> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", general_purpose::STANDARD.encode(&self.0))
+        write!(f, "{}", &self.value)
     }
 }
 
-impl AsRef<[u8]> for Digest {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
-impl TryFrom<&[u8]> for Digest {
-    type Error = TryFromSliceError;
-    fn try_from(item: &[u8]) -> Result<Self, Self::Error> {
-        Ok(Digest(item.try_into()?))
-    }
-}
-
-/// This trait is implemented by all messages that can be hashed.
-pub trait Hash {
-    fn digest(&self) -> Digest;
+pub fn digest_from_hex<S: Scalar, D: ZkpDigest<S> + AsScalars, T: AsRef<[u8]>>(hex: T) -> Result<D> {
+    let scalar_hex_len = S::BYTELEN::to_usize() * 2;
+    let vecs = hex.as_ref().chunks(scalar_hex_len).map(|v| {
+        Ok(S::from_bytes(GenericArray::try_from_iter(Vec::from_hex(v)?)?))
+    }).collect::<Result<Vec<S>>>()?;
+    Ok(D::from_scalars(GenericArray::try_from_iter(vecs)?))
 }
 
 /// Represents a public key (in bytes).
@@ -85,24 +88,6 @@ impl PublicKey {
         
         let array = bytes.try_into().map_err(|_| base64::DecodeError::InvalidLength)?;
         Ok(Self(array))
-    }
-
-    pub fn to_hash(&self) -> Fr {
-        const CHUNK_SIZE: usize = 24;
-        const OFFSET: usize = 8;
-        
-        let mut chunk1 = [0u8; 32];
-        let mut chunk2 = [0u8; 32];
-        
-        chunk1[OFFSET..].copy_from_slice(&self.0[..CHUNK_SIZE]);
-        chunk2[OFFSET..].copy_from_slice(&self.0[CHUNK_SIZE..]);
-        
-        let fr1 = Fr::dec(&mut chunk1.to_vec().into_iter())
-            .expect("PublicKey chunk1 should be valid for Fr conversion");
-        let fr2 = Fr::dec(&mut chunk2.to_vec().into_iter())
-            .expect("PublicKey chunk2 should be valid for Fr conversion");
-            
-        (fr1, fr2).hash()
     }
 }
 
@@ -256,16 +241,16 @@ pub fn generate_production_keypair() -> (PublicKey, SecretKey) {
 /// This service holds the node's private key. It takes digests as input and returns a signature
 /// over the digest (through a oneshot channel).
 #[derive(Clone)]
-pub struct SignatureService {
-    channel: Sender<(Digest, oneshot::Sender<Signature>)>,
+pub struct SignatureService<S: Scalar + 'static, D: ZkpDigest<S> + 'static> {
+    channel: Sender<(Digest<S, D>, oneshot::Sender<Signature>)>,
 }
 
-impl SignatureService {
+impl<S: Scalar + 'static, D: ZkpDigest<S> + 'static> SignatureService<S, D> {
     pub fn new(secret: SecretKey) -> Self {
         const CHANNEL_BUFFER: usize = 100;
         const BLS_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
         
-        let (tx, mut rx): (Sender<(Digest, oneshot::Sender<Signature>)>, _) = channel(CHANNEL_BUFFER);
+        let (tx, mut rx): (Sender<(Digest<S, D>, oneshot::Sender<Signature>)>, _) = channel(CHANNEL_BUFFER);
         
         tokio::spawn(async move {
             let sk = blst::min_pk::SecretKey::from_bytes(&secret.0)
@@ -281,7 +266,7 @@ impl SignatureService {
         Self { channel: tx }
     }
 
-    pub async fn request_signature(&mut self, digest: Digest) -> Signature {
+    pub async fn request_signature(&mut self, digest: Digest<S, D>) -> Signature {
         let (sender, receiver) = oneshot::channel();
         
         self.channel

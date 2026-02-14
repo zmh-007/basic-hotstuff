@@ -3,6 +3,8 @@ use tokio::sync::mpsc::{channel, Receiver};
 
 // External crate imports
 use log::info;
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
 
 // Internal crate imports
 use consensus::Consensus;
@@ -20,7 +22,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub async fn new(
+    pub async fn new<const N: usize, S: Scalar + 'static, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned + 'static, V: Vk<N, S, P> + DeserializeOwned + 'static>(
         committee_file: &str,
         key_file: &str,
         store_path: &str,
@@ -56,11 +58,11 @@ impl Node {
             })?;
 
         // Initialize signature service
-        let signature_service = SignatureService::new(secret_key);
+        let signature_service = SignatureService::<S, D>::new(secret_key);
 
         // Start consensus core
         info!("Starting consensus core for node: {}", name);
-        Consensus::spawn(
+        Consensus::<N, S, D, U, P, V>::spawn(
             name,
             committee.consensus,
             parameters.consensus,

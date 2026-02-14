@@ -5,9 +5,11 @@ use crate::{
 };
 use crypto::{Digest, PublicKey};
 use log::{debug, error, info, warn};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
 
-impl Core {
-    pub async fn send_prepare(&mut self, high_qc: QuorumCert) -> ConsensusResult<()> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
+    pub async fn send_prepare(&mut self, high_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Sending Prepare message for view {}", self.view);
         
         if !self.check_is_leader(&self.view) {
@@ -29,17 +31,17 @@ impl Core {
             }
         };
 
-        let node = Node::new(high_qc.node_digest, blob);
-        let prepare_message = ConsensusMessage::new(
+        let node = Node::<N, S, D, U, P, V>::new(high_qc.node_digest.clone(), blob);
+        let prepare_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::Prepare,
             self.name,
             self.view.clone(),
-            MessagePayload::Prepare(node.clone(), high_qc.clone()),
+            MessagePayload::<N, S, D, U, P, V>::Prepare(node.clone(), high_qc.clone()),
             self.signature_service.clone(),
         ).await;
 
-        let payload = bincode::serialize(&prepare_message)
-            .map_err(ConsensusError::SerializationError)?;
+        let payload = postcard::to_allocvec(&prepare_message)
+            .map_err(|e| ConsensusError::SerializationError(e.to_string()))?;
             
         debug!("Broadcasting Prepare message for view {}", self.view);
         self.network.send(None, payload)?;
@@ -48,14 +50,21 @@ impl Core {
 
     pub async fn handle_prepare(
         &mut self,
-        _author: PublicKey,
-        view: View,
-        node: Node,
-        high_qc: QuorumCert,
+        author: PublicKey,
+        view: View<S, D>,
+        node: Node<N, S, D, U, P, V>,
+        high_qc: QuorumCert<S, D>,
     ) -> ConsensusResult<()> {
         info!("Received Prepare for view {}", view);
         if view != self.view {
             debug!("Ignoring Prepare for view {} (current: {})", view, self.view);
+            return Ok(());
+        }
+        
+        // Verify the sender is the leader for this view
+        let expected_leader = self.leader_elector.get_leader(&view);
+        if author != expected_leader {
+            error!("Received Prepare from non-leader: {:?}, expected: {:?}", author, expected_leader);
             return Ok(());
         }
         
@@ -64,7 +73,8 @@ impl Core {
             return Ok(());
         }
         
-        if self.voted_node != Node::default() {
+        // Check if we already voted in this view
+        if self.voted_node != Node::<N, S, D, U, P, V>::default() && self.voted_view == view {
             warn!(
                 "Already voted for view {} (node: {}), ignoring new Prepare (node: {})",
                 view, self.voted_node.digest(), node.digest()
@@ -72,7 +82,7 @@ impl Core {
             return Ok(());
         }
 
-        if high_qc != QuorumCert::default() {
+        if high_qc != QuorumCert::<S, D>::default() {
             high_qc.verify(&self.committee)?;
         }
 
@@ -100,11 +110,12 @@ impl Core {
         self.safe_node(&node, &high_qc)?;
         
         self.voted_node = node.clone();
-        self.persist_voted_node().await;
+        self.voted_view = view.clone();
+        self.persist_voted_state().await;
         self.send_prepare_vote(node.digest()).await
     }
 
-    fn extend(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {        
+    fn extend(&self, node: &Node<N, S, D, U, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {        
         if node.parent != high_qc.node_digest {
             return Err(ConsensusError::InvalidQC(
                 format!("expect parent {:?}, got {:?}", high_qc.node_digest, node.parent)
@@ -113,8 +124,8 @@ impl Core {
         Ok(())
     }
 
-    fn safe_node(&self, node: &Node, high_qc: &QuorumCert) -> ConsensusResult<()> {
-        if self.lock_qc == QuorumCert::default() {
+    fn safe_node(&self, node: &Node<N, S, D, U, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {
+        if self.lock_qc == QuorumCert::<S, D>::default() {
             debug!("No lock QC (genesis), node is safe");
             return Ok(());
         }
@@ -142,17 +153,17 @@ impl Core {
         }
     }
 
-    pub async fn send_prepare_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
+    pub async fn send_prepare_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending PrepareVote message");
-        let prepare_vote_message = ConsensusMessage::new(
+        let prepare_vote_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::Prepare,
             self.name,
             self.view.clone(), 
-            MessagePayload::PrepareVote(node_digest),
+            MessagePayload::<N, S, D, U, P, V>::PrepareVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
-        match bincode::serialize(&prepare_vote_message) {
+        match postcard::to_allocvec(&prepare_vote_message) {
             Ok(payload) => {
                 let leader = self.leader_elector.get_leader(&self.view);
                 debug!("Sending PrepareVote {:?} to leader {:?}", node_digest, leader);
@@ -160,7 +171,7 @@ impl Core {
                 debug!("PrepareVote message sent successfully");
             }
             Err(e) => {
-                return Err(ConsensusError::SerializationError(e));
+                return Err(ConsensusError::SerializationError(e.to_string()));
             }
         }
         Ok(())

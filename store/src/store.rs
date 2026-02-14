@@ -15,6 +15,7 @@ const CONSENSUS_CF: &str = "consensus";
 
 // Core consensus state keys
 const VOTED_NODE_KEY: &[u8] = b"voted_node";
+const VOTED_VIEW_KEY: &[u8] = b"voted_view";
 const PREPARE_QC_KEY: &[u8] = b"prepare_qc";
 const LOCK_QC_KEY: &[u8] = b"lock_qc";
 const LOCK_BLOB_KEY: &[u8] = b"lock_blob";
@@ -22,12 +23,14 @@ const LOCK_BLOB_KEY: &[u8] = b"lock_blob";
 pub enum StoreCommand {
     // Core consensus state commands
     WriteVotedNode(Value),
+    WriteVotedView(Value),
     WritePrepareQC(Value),
     WriteLockQC(Value),
     WriteLockBlob(String),
     
     // Core consensus state read commands
     ReadVotedNode(oneshot::Sender<StoreResult<Option<Value>>>),
+    ReadVotedView(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadPrepareQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockBlob(oneshot::Sender<StoreResult<Option<Value>>>),
@@ -69,6 +72,9 @@ impl Store {
                 StoreCommand::WriteVotedNode(value) => {
                     let _ = db.put_cf(&consensus_cf, VOTED_NODE_KEY, &value);
                 }
+                StoreCommand::WriteVotedView(value) => {
+                    let _ = db.put_cf(&consensus_cf, VOTED_VIEW_KEY, &value);
+                }
                 StoreCommand::WritePrepareQC(value) => {
                     let _ = db.put_cf(&consensus_cf, PREPARE_QC_KEY, &value);
                 }
@@ -81,6 +87,10 @@ impl Store {
                 }
                 StoreCommand::ReadVotedNode(sender) => {
                     let response = db.get_cf(&consensus_cf, VOTED_NODE_KEY);
+                    let _ = sender.send(response);
+                }
+                StoreCommand::ReadVotedView(sender) => {
+                    let response = db.get_cf(&consensus_cf, VOTED_VIEW_KEY);
                     let _ = sender.send(response);
                 }
                 StoreCommand::ReadPrepareQC(sender) => {
@@ -103,6 +113,12 @@ impl Store {
     pub async fn write_voted_node(&mut self, value: Value) {
         if let Err(e) = self.channel.send(StoreCommand::WriteVotedNode(value)).await {
             panic!("Failed to send Write VotedNode command to store: {}", e);
+        }
+    }
+    
+    pub async fn write_voted_view(&mut self, value: Value) {
+        if let Err(e) = self.channel.send(StoreCommand::WriteVotedView(value)).await {
+            panic!("Failed to send Write VotedView command to store: {}", e);
         }
     }
     
@@ -132,6 +148,16 @@ impl Store {
         receiver
             .await
             .expect("Failed to receive reply to Read VotedNode command from store")
+    }
+    
+    pub async fn read_voted_view(&mut self) -> StoreResult<Option<Value>> {
+        let (sender, receiver) = oneshot::channel();
+        if let Err(e) = self.channel.send(StoreCommand::ReadVotedView(sender)).await {
+            panic!("Failed to send Read VotedView command to store: {}", e);
+        }
+        receiver
+            .await
+            .expect("Failed to receive reply to Read VotedView command from store")
     }
     
     pub async fn read_prepare_qc(&mut self) -> StoreResult<Option<Value>> {

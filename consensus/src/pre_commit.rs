@@ -1,10 +1,11 @@
 use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
 
-
-impl Core {
-    pub async fn handle_pre_commit(&mut self, _: PublicKey, view: View, prepare_qc: QuorumCert) -> ConsensusResult<()> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
+    pub async fn handle_pre_commit(&mut self, _author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {
             error!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
@@ -12,6 +13,10 @@ impl Core {
         }
         if prepare_qc.qc_type != ConsensusMessageType::Prepare {
             error!("Received PreCommit with invalid QC type: {:?}", prepare_qc.qc_type);
+            return Ok(());
+        }
+        if prepare_qc.view != view {
+            error!("PreCommit QC view mismatch: expected {:?}, got {:?}", view, prepare_qc.view);
             return Ok(());
         }
         if !self.check_node(&prepare_qc.node_digest) {
@@ -27,17 +32,17 @@ impl Core {
         Ok(())
     }
 
-    pub async fn send_pre_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
+    pub async fn send_pre_commit_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending PreCommitVote message");
-        let pre_commit_vote_message = ConsensusMessage::new(
+        let pre_commit_vote_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::PreCommit,
             self.name,
             self.view.clone(), 
-            MessagePayload::PreCommitVote(node_digest.clone()),
+            MessagePayload::<N, S, D, U, P, V>::PreCommitVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
-         match bincode::serialize(&pre_commit_vote_message) {
+         match postcard::to_allocvec(&pre_commit_vote_message) {
                 Ok(payload) => {
                     // send the message to leader
                     let leader = self.leader_elector.get_leader(&self.view);
@@ -46,7 +51,7 @@ impl Core {
                     debug!("PreCommitVote message sent successfully");
                 }
                 Err(e) => {
-                    return Err(ConsensusError::SerializationError(e));
+                    return Err(ConsensusError::SerializationError(e.to_string()));
                 }
           }
         Ok(())

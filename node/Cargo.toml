@@ -4,8 +4,8 @@ version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-zk = { workspace = true }
 l0 = { workspace = true }
+eon-u256 = { workspace = true }
 blst = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -28,3 +28,4 @@ hex_str = { workspace = true }
 crypto = { workspace = true }
 store = { workspace = true }
 consensus = { workspace = true }
+zkp = { workspace = true }

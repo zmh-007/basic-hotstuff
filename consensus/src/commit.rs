@@ -1,10 +1,11 @@
 use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
+use serde::de::DeserializeOwned;
 
-
-impl Core {
-    pub async fn handle_commit(&mut self, _: PublicKey, view: View, pre_commit_qc: QuorumCert) -> ConsensusResult<()> {
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
+    pub async fn handle_commit(&mut self, _author: PublicKey, view: View<S, D>, pre_commit_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received Commit for view {:?}", view);
         if view != self.view {
             error!("Received Commit for view {:?}, but current view is {:?}", view, self.view);
@@ -12,6 +13,10 @@ impl Core {
         }
         if pre_commit_qc.qc_type != ConsensusMessageType::PreCommit {
             error!("Received Commit with invalid QC type: {:?}", pre_commit_qc.qc_type);
+            return Ok(());
+        }
+        if pre_commit_qc.view != view {
+            error!("Commit QC view mismatch: expected {:?}, got {:?}", view, pre_commit_qc.view);
             return Ok(());
         }
         if !self.check_node(&pre_commit_qc.node_digest) {
@@ -26,17 +31,17 @@ impl Core {
         Ok(())
     }
 
-    pub async fn send_commit_vote(&mut self, node_digest: Digest) -> ConsensusResult<()> {
+    pub async fn send_commit_vote(&mut self, node_digest: Digest<S, D>) -> ConsensusResult<()> {
         info!("Sending Commit Vote message");
-        let commit_vote_message = ConsensusMessage::new(
+        let commit_vote_message = ConsensusMessage::<N, S, D, U, P, V>::new(
             ConsensusMessageType::Commit,
             self.name,
             self.view.clone(), 
-            MessagePayload::CommitVote(node_digest.clone()),
+            MessagePayload::<N, S, D, U, P, V>::CommitVote(node_digest.clone()),
             self.signature_service.clone(),
         ).await;
 
-         match bincode::serialize(&commit_vote_message) {
+         match postcard::to_allocvec(&commit_vote_message) {
                 Ok(payload) => {
                     // send the message to leader
                     let leader = self.leader_elector.get_leader(&self.view);
@@ -45,13 +50,13 @@ impl Core {
                     debug!("Commit Vote message sent successfully");
                 }
                 Err(e) => {
-                 return Err(ConsensusError::SerializationError(e));
+                 return Err(ConsensusError::SerializationError(e.to_string()));
                 }
           }
         Ok(())
     }
 
-    async fn lock_qc_and_blob(&mut self, qc: QuorumCert) {
+    async fn lock_qc_and_blob(&mut self, qc: QuorumCert<S, D>) {
         self.lock_qc = qc.clone();
         self.lock_blob = self.voted_node.blob.clone();
         self.persist_lock_qc().await;

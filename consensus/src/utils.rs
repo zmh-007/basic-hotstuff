@@ -1,27 +1,51 @@
+use blst::min_pk::AggregatePublicKey;
 use crypto::{Digest, PublicKey, Signature};
-
+use serde::de::DeserializeOwned;
 use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::ConsensusResult};
+use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, AsScalars, SafeU256};
+use hex::ToHex;
 
-impl Core {
-    pub fn check_is_leader(&self, view: &View) -> bool {
+pub fn digest_to_hex<S: Scalar, D: ZkpDigest<S> + AsScalars>(digest: &D) -> String {
+    digest.to_scalars().into_iter().flat_map(|v| v.to_bytes()).collect::<Vec<u8>>().encode_hex()
+}
+
+impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
+    pub fn check_is_leader(&self, view: &View<S, D>) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == self.name
     }
 
-    pub fn check_node(&self, node_digest: &Digest) -> bool {
-        self.voted_node != Node::default() && self.voted_node.digest() == *node_digest
+    pub fn check_node(&self, node_digest: &Digest<S, D>) -> bool {
+        self.voted_node != Node::<N, S, D, U, P, V>::default() 
+            && self.voted_view == self.view
+            && self.voted_node.digest() == *node_digest
     }
 }
 
-pub fn verify_signature(digest: &Digest, author: &PublicKey, sig: &Signature) -> ConsensusResult<()>{
+pub fn verify_signature(digest: &[u8], author: &PublicKey, sig: &Signature) -> ConsensusResult<()>{
     let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
     let signature = blst::min_pk::Signature::from_bytes(&sig.0)
         .map_err(|_| ConsensusError::InvalidSignature("Invalid signature bytes".to_string()))?;
     let pk = blst::min_pk::PublicKey::from_bytes(&author.0)
         .map_err(|_| ConsensusError::InvalidSignature("Invalid public key bytes".to_string()))?;
-    let err = signature.verify(true, &digest.to_vec(), dst, &[], &pk, true);
+    let err = signature.verify(true, digest, dst, &[], &pk, true);
     if err != blst::BLST_ERROR::BLST_SUCCESS {
         return Err(ConsensusError::InvalidSignature(author.to_string()));
     }
     Ok(())
+}
+
+pub fn aggregate_public_keys(public_keys: &[PublicKey]) -> anyhow::Result<PublicKey> {
+    if public_keys.is_empty() {
+        return Err(anyhow::anyhow!("Cannot aggregate empty public keys"));
+    }
+    let blst_keys: Vec<_> = public_keys.iter()
+        .map(|pk| blst::min_pk::PublicKey::from_bytes(&pk.0)
+            .map_err(|_| anyhow::anyhow!("Invalid public key bytes")))
+        .collect::<Result<_, _>>()?;
+    let pks: Vec<_> = blst_keys.iter().collect();
+    let aggregated_pk = AggregatePublicKey::aggregate(&pks, true)
+        .map_err(|e| anyhow::anyhow!("failed to aggregate public keys: {:?}", e))?;
+    let bytes = aggregated_pk.to_public_key().to_bytes();
+    Ok(PublicKey(bytes))
 }

@@ -1,5 +1,4 @@
-use crate::consensus::View;
-use crypto::{Digest, PublicKey};
+use crypto::PublicKey;
 use network::P2pError;
 use store::StoreError;
 use thiserror::Error;
@@ -31,7 +30,7 @@ pub enum ConsensusError {
     P2pNetworkError(#[from] P2pError),
 
     #[error("Serialization error: {0}")]
-    SerializationError(#[from] Box<bincode::ErrorKind>),
+    SerializationError(String),
 
     #[error("Store error: {0}")]
     StoreError(#[from] StoreError),
@@ -51,11 +50,11 @@ pub enum ConsensusError {
     #[error("Received QC without a quorum")]
     QCRequiresQuorum,
 
-    #[error("Wrong leader: received block {digest} from {leader} at view {view}")]
+    #[error("Wrong leader: received block from {leader} at view (height: {height}, round: {round})")]
     WrongLeader {
-        digest: Digest,
+        height: u64,
+        round: u64,
         leader: PublicKey,
-        view: View,
     },
 
     #[error("Invalid payload")]
@@ -69,4 +68,7 @@ pub enum ConsensusError {
 
     #[error("invalid aggregated public key")]
     InvalidAggregatedPublicKey,
+
+    #[error("Stale decide for height {0} (current: {1})")]
+    StaleDecide(u64, u64),
 }
