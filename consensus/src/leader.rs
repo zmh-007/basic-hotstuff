@@ -16,6 +16,6 @@ impl RRLeaderElector {
     pub fn get_leader<S: Scalar, D: ZkpDigest<S>>(&self, view: &View<S, D>) -> PublicKey {
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
         keys.sort();
-        keys[(view.height + view.round) as usize % self.committee.size()]
+        keys[view.round as usize % self.committee.size()]
     }
 }

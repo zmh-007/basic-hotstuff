@@ -66,11 +66,11 @@ impl<S: Scalar, D: ZkpDigest<S>> NVMaker<S, D> {
         if self.weight >= committee.quorum_threshold() {
             self.weight = 0;
             
-            // Find the QC with the highest view (first by height, then by round)
+            // Find the QC with the highest round
             let highest_qc = self.votes
                 .iter()
                 .map(|(_, qc)| qc)
-                .max_by_key(|qc| (qc.view.height, qc.view.round))
+                .max_by_key(|qc| qc.view.round)
                 .unwrap()
                 .clone();
             

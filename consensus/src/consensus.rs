@@ -310,8 +310,13 @@ impl<S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + Dese
         // Create and initialize the P2P network
         let mut p2p = P2pLibp2p::default();
         p2p.init(move |id, payload: Vec<u8>| {
-            let msg: ConsensusMessage<N, S, D, U, P, V> = postcard::from_bytes(&payload)
-                .expect("Failed to deserialize message from consensus module");
+            let msg: ConsensusMessage<N, S, D, U, P, V> = match postcard::from_bytes(&payload) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    error!("Failed to deserialize message from peer {:?}: {}", id, e);
+                    return;
+                }
+            };
             if let Err(e) = msg_tx.send((id, msg)) {
                 error!("Failed to send message to consensus module: {}", e);
             }

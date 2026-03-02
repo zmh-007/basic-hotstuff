@@ -101,8 +101,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     pub async fn run(&mut self) {
         info!("HotStuff consensus core started for node {}", self.name);
         
-        // Start the timer for the first round
-        self.start_new_round(0).await;
+        // Start the timer for the first round (resume from persisted round)
+        self.start_new_round(self.view.round).await;
 
         // Main consensus loop
         loop {
@@ -149,6 +149,30 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
         use crate::consensus::ConsensusMessageType as MsgType;
         
+        // Fast-forward on authenticated Prepare from valid leader, but only if
+        // the included QC proves the round is legitimate (round <= qc.round + 1).
+        if message.msg_type == MsgType::Prepare && message.view.round > self.view.round {
+            if let MessagePayload::Prepare(_, ref high_qc) = message.msg {
+                let expected_leader = self.leader_elector.get_leader(&message.view);
+                let qc_round = high_qc.view.round;
+                // Verify: sender is leader, round bounded by QC, and QC signature is valid
+                if message.author == expected_leader
+                    && message.view.round <= qc_round + 1
+                    && (*high_qc == QuorumCert::default() || high_qc.verify(&self.committee).is_ok())
+                {
+                    info!(
+                        "Received Prepare from leader for round {} (current: {}, qc round: {}), fast-forwarding",
+                        message.view.round, self.view.round, qc_round
+                    );
+                    self.consecutive_timeouts = 0;
+                    self.view.round = message.view.round;
+                    self.view.height = message.view.height;
+                    self.persist_round().await;
+                    self.timer.reset();
+                }
+            }
+        }
+
         match (message.msg_type, message.msg) {
             (MsgType::NewView, MessagePayload::NewView(qc)) => {
                 self.handle_new_view(message.author, message.view, qc).await
@@ -188,9 +212,11 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             }
         };
 
-        // Update view state
-        self.view.height = height;
-        
+        self.persist_round().await;
+        // Ensure height never goes backwards (replica may not have processed the last committed block yet)
+        self.view.height = height.max(self.view.height);
+        self.aggregator.cleanup();
+
         // Reset voted_node if view has changed from the view where we voted
         if self.view != self.voted_view {
             self.voted_node = Node::default();
@@ -229,8 +255,9 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return self.parameters.timeout_delay;
         }
         
-        // Use saturating arithmetic to prevent overflow
-        let backoff_multiplier = 2_u64.saturating_pow((self.consecutive_timeouts - 1) as u32);
+        // Cap exponent at 63 to prevent u32 truncation and keep timeout finite
+        let exponent = (self.consecutive_timeouts - 1).min(63) as u32;
+        let backoff_multiplier = 2_u64.saturating_pow(exponent);
         
         self.parameters.timeout_delay.saturating_mul(backoff_multiplier)
     }
@@ -274,6 +301,15 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             self.lock_blob = lock_blob;
             info!("Restored lock_blob: {} chars", self.lock_blob.len());
         }
+
+        // Restore round
+        if let Ok(Some(round_bytes)) = self.store.read_round().await {
+            if round_bytes.len() == 8 {
+                let round = u64::from_le_bytes(round_bytes.try_into().unwrap());
+                self.view.round = round;
+                info!("Restored round: {}", round);
+            }
+        }
     }
     
     pub async fn persist_voted_state(&mut self) {
@@ -299,5 +335,9 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     
     pub async fn persist_lock_blob(&mut self) {
         self.store.write_lock_blob(self.lock_blob.clone()).await;
+    }
+
+    pub async fn persist_round(&mut self) {
+        self.store.write_round(self.view.round.to_le_bytes().to_vec()).await;
     }
 }

@@ -4,6 +4,7 @@ use tokio::sync::mpsc::{channel, Sender, Receiver};
 use tokio::sync::oneshot;
 use rocksdb::{DB, Options, ColumnFamilyDescriptor, Error};
 use anyhow::Result;
+use log::error;
 
 pub type StoreError = Error;
 type StoreResult<T> = Result<T, StoreError>;
@@ -19,6 +20,7 @@ const VOTED_VIEW_KEY: &[u8] = b"voted_view";
 const PREPARE_QC_KEY: &[u8] = b"prepare_qc";
 const LOCK_QC_KEY: &[u8] = b"lock_qc";
 const LOCK_BLOB_KEY: &[u8] = b"lock_blob";
+const ROUND_KEY: &[u8] = b"round";
 
 pub enum StoreCommand {
     // Core consensus state commands
@@ -27,6 +29,7 @@ pub enum StoreCommand {
     WritePrepareQC(Value),
     WriteLockQC(Value),
     WriteLockBlob(String),
+    WriteRound(Value),
     
     // Core consensus state read commands
     ReadVotedNode(oneshot::Sender<StoreResult<Option<Value>>>),
@@ -34,6 +37,7 @@ pub enum StoreCommand {
     ReadPrepareQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockBlob(oneshot::Sender<StoreResult<Option<Value>>>),
+    ReadRound(oneshot::Sender<StoreResult<Option<Value>>>),
 }
 
 #[derive(Clone)]
@@ -70,20 +74,35 @@ impl Store {
 
             match command {
                 StoreCommand::WriteVotedNode(value) => {
-                    let _ = db.put_cf(&consensus_cf, VOTED_NODE_KEY, &value);
+                    if let Err(e) = db.put_cf(&consensus_cf, VOTED_NODE_KEY, &value) {
+                        error!("[Store] Failed to write voted_node: {}", e);
+                    }
                 }
                 StoreCommand::WriteVotedView(value) => {
-                    let _ = db.put_cf(&consensus_cf, VOTED_VIEW_KEY, &value);
+                    if let Err(e) = db.put_cf(&consensus_cf, VOTED_VIEW_KEY, &value) {
+                        error!("[Store] Failed to write voted_view: {}", e);
+                    }
                 }
                 StoreCommand::WritePrepareQC(value) => {
-                    let _ = db.put_cf(&consensus_cf, PREPARE_QC_KEY, &value);
+                    if let Err(e) = db.put_cf(&consensus_cf, PREPARE_QC_KEY, &value) {
+                        error!("[Store] Failed to write prepare_qc: {}", e);
+                    }
                 }
                 StoreCommand::WriteLockQC(value) => {
-                    let _ = db.put_cf(&consensus_cf, LOCK_QC_KEY, &value);
+                    if let Err(e) = db.put_cf(&consensus_cf, LOCK_QC_KEY, &value) {
+                        error!("[Store] Failed to write lock_qc: {}", e);
+                    }
                 }
                 StoreCommand::WriteLockBlob(value) => {
                     let value_bytes = value.as_bytes().to_vec();
-                    let _ = db.put_cf(&consensus_cf, LOCK_BLOB_KEY, &value_bytes);
+                    if let Err(e) = db.put_cf(&consensus_cf, LOCK_BLOB_KEY, &value_bytes) {
+                        error!("[Store] Failed to write lock_blob: {}", e);
+                    }
+                }
+                StoreCommand::WriteRound(value) => {
+                    if let Err(e) = db.put_cf(&consensus_cf, ROUND_KEY, &value) {
+                        error!("[Store] Failed to write round: {}", e);
+                    }
                 }
                 StoreCommand::ReadVotedNode(sender) => {
                     let response = db.get_cf(&consensus_cf, VOTED_NODE_KEY);
@@ -103,6 +122,10 @@ impl Store {
                 }
                 StoreCommand::ReadLockBlob(sender) => {
                     let response = db.get_cf(&consensus_cf, LOCK_BLOB_KEY);
+                    let _ = sender.send(response);
+                }
+                StoreCommand::ReadRound(sender) => {
+                    let response = db.get_cf(&consensus_cf, ROUND_KEY);
                     let _ = sender.send(response);
                 }
             }
@@ -139,6 +162,13 @@ impl Store {
             panic!("Failed to send Write LockBlob command to store: {}", e);
         }
     }
+
+    pub async fn write_round(&mut self, value: Value) {
+        if let Err(e) = self.channel.send(StoreCommand::WriteRound(value)).await {
+            panic!("Failed to send Write Round command to store: {}", e);
+        }
+    }
+
     // Core consensus state read methods
     pub async fn read_voted_node(&mut self) -> StoreResult<Option<Value>> {
         let (sender, receiver) = oneshot::channel();
@@ -180,6 +210,16 @@ impl Store {
             .expect("Failed to receive reply to Read LockQC command from store")
     }
     
+    pub async fn read_round(&mut self) -> StoreResult<Option<Value>> {
+        let (sender, receiver) = oneshot::channel();
+        if let Err(e) = self.channel.send(StoreCommand::ReadRound(sender)).await {
+            panic!("Failed to send Read Round command to store: {}", e);
+        }
+        receiver
+            .await
+            .expect("Failed to receive reply to Read Round command from store")
+    }
+
     pub async fn read_lock_blob(&mut self) -> StoreResult<Option<String>> {
         let (sender, receiver) = oneshot::channel();
         if let Err(e) = self.channel.send(StoreCommand::ReadLockBlob(sender)).await {

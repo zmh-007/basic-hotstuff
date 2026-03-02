@@ -78,14 +78,12 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + AsScalars + DeserializeOwned +
         }
 
         time::sleep(time::Duration::from_millis(self.parameters.propose_delay)).await;
-        let new_height = commit_qc.view.height + 1;
-        self.aggregator.cleanup();
         self.unlock_blob().await;
-        self.view.height = new_height;
+        self.view.height = commit_qc.view.height + 1;
         self.consecutive_timeouts = 0;
         // Reset timer to original timeout
         self.timer = Timer::new(self.parameters.timeout_delay);
-        self.start_new_round(0).await;
+        self.start_new_round(self.view.round + 1).await;
         Ok(())
     }
 

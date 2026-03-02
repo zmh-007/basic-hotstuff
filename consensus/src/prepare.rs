@@ -130,17 +130,17 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return Ok(());
         }
 
-        let high_view = (high_qc.view.height, high_qc.view.round);
-        let lock_view = (self.lock_qc.view.height, self.lock_qc.view.round);
+        let high_round = high_qc.view.round;
+        let lock_round = self.lock_qc.view.round;
         
         // Safety conditions (either must be true):
-        // 1. highQC.view > lockQC.view OR
+        // 1. highQC.round > lockQC.round OR
         // 2. node extends lockQC (node's parent equals lockQC's node)
-        let higher_view = high_view > lock_view;
+        let higher_view = high_round > lock_round;
         let extends_lock = node.parent == self.lock_qc.node_digest;
         
         if higher_view {
-            debug!("Node is safe: higher view ({:?} > {:?})", high_view, lock_view);
+            debug!("Node is safe: higher round ({} > {})", high_round, lock_round);
             Ok(())
         } else if extends_lock {
             debug!("Node is safe: extends locked node");
