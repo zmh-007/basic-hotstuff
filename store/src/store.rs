@@ -20,7 +20,7 @@ const VOTED_VIEW_KEY: &[u8] = b"voted_view";
 const PREPARE_QC_KEY: &[u8] = b"prepare_qc";
 const LOCK_QC_KEY: &[u8] = b"lock_qc";
 const LOCK_BLOB_KEY: &[u8] = b"lock_blob";
-const ROUND_KEY: &[u8] = b"round";
+const VIEW_KEY: &[u8] = b"view";
 
 pub enum StoreCommand {
     // Core consensus state commands
@@ -29,7 +29,7 @@ pub enum StoreCommand {
     WritePrepareQC(Value),
     WriteLockQC(Value),
     WriteLockBlob(String),
-    WriteRound(Value),
+    WriteView(Value),
     
     // Core consensus state read commands
     ReadVotedNode(oneshot::Sender<StoreResult<Option<Value>>>),
@@ -37,7 +37,7 @@ pub enum StoreCommand {
     ReadPrepareQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockQC(oneshot::Sender<StoreResult<Option<Value>>>),
     ReadLockBlob(oneshot::Sender<StoreResult<Option<Value>>>),
-    ReadRound(oneshot::Sender<StoreResult<Option<Value>>>),
+    ReadView(oneshot::Sender<StoreResult<Option<Value>>>),
 }
 
 #[derive(Clone)]
@@ -99,9 +99,9 @@ impl Store {
                         error!("[Store] Failed to write lock_blob: {}", e);
                     }
                 }
-                StoreCommand::WriteRound(value) => {
-                    if let Err(e) = db.put_cf(&consensus_cf, ROUND_KEY, &value) {
-                        error!("[Store] Failed to write round: {}", e);
+                StoreCommand::WriteView(value) => {
+                    if let Err(e) = db.put_cf(&consensus_cf, VIEW_KEY, &value) {
+                        error!("[Store] Failed to write view: {}", e);
                     }
                 }
                 StoreCommand::ReadVotedNode(sender) => {
@@ -124,8 +124,8 @@ impl Store {
                     let response = db.get_cf(&consensus_cf, LOCK_BLOB_KEY);
                     let _ = sender.send(response);
                 }
-                StoreCommand::ReadRound(sender) => {
-                    let response = db.get_cf(&consensus_cf, ROUND_KEY);
+                StoreCommand::ReadView(sender) => {
+                    let response = db.get_cf(&consensus_cf, VIEW_KEY);
                     let _ = sender.send(response);
                 }
             }
@@ -163,9 +163,9 @@ impl Store {
         }
     }
 
-    pub async fn write_round(&mut self, value: Value) {
-        if let Err(e) = self.channel.send(StoreCommand::WriteRound(value)).await {
-            panic!("Failed to send Write Round command to store: {}", e);
+    pub async fn write_view(&mut self, value: Value) {
+        if let Err(e) = self.channel.send(StoreCommand::WriteView(value)).await {
+            panic!("Failed to send Write View command to store: {}", e);
         }
     }
 
@@ -210,14 +210,14 @@ impl Store {
             .expect("Failed to receive reply to Read LockQC command from store")
     }
     
-    pub async fn read_round(&mut self) -> StoreResult<Option<Value>> {
+    pub async fn read_view(&mut self) -> StoreResult<Option<Value>> {
         let (sender, receiver) = oneshot::channel();
-        if let Err(e) = self.channel.send(StoreCommand::ReadRound(sender)).await {
-            panic!("Failed to send Read Round command to store: {}", e);
+        if let Err(e) = self.channel.send(StoreCommand::ReadView(sender)).await {
+            panic!("Failed to send Read View command to store: {}", e);
         }
         receiver
             .await
-            .expect("Failed to receive reply to Read Round command from store")
+            .expect("Failed to receive reply to Read View command from store")
     }
 
     pub async fn read_lock_blob(&mut self) -> StoreResult<Option<String>> {

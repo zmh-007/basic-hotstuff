@@ -8,7 +8,7 @@ use zkp::{Scalar, Digest as ZkpDigest};
 
 pub struct Aggregator<S: Scalar, D: ZkpDigest<S>> {
     committee: Committee,
-    new_view_aggregators: HashMap<View<S, D>, Box<NVMaker<S, D>>>,
+    new_view_aggregators: HashMap<View, Box<NVMaker<S, D>>>,
 }
 
 impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
@@ -19,7 +19,7 @@ impl<S: Scalar, D: ZkpDigest<S>> Aggregator<S, D> {
         }
     }
 
-    pub fn add_new_view(&mut self, author: PublicKey, view: View<S, D>, qc: QuorumCert<S, D>) -> ConsensusResult<Option<QuorumCert<S, D>>> {
+    pub fn add_new_view(&mut self, author: PublicKey, view: View, qc: QuorumCert<S, D>) -> ConsensusResult<Option<QuorumCert<S, D>>> {
         // Note: view is already validated by handle_new_view (view == self.view)
         // so HashMap will only ever have one entry at a time
         self.new_view_aggregators
@@ -37,6 +37,7 @@ struct NVMaker<S: Scalar, D: ZkpDigest<S>> {
     weight: Stake,
     votes: Vec<(PublicKey, QuorumCert<S, D>)>,
     used: HashSet<PublicKey>,
+    quorum_reached: bool,
 }
 
 impl<S: Scalar, D: ZkpDigest<S>> NVMaker<S, D> {
@@ -45,6 +46,7 @@ impl<S: Scalar, D: ZkpDigest<S>> NVMaker<S, D> {
             weight: 0,
             votes: Vec::new(),
             used: HashSet::new(),
+            quorum_reached: false,
         }
     }
 
@@ -60,17 +62,22 @@ impl<S: Scalar, D: ZkpDigest<S>> NVMaker<S, D> {
             ConsensusError::AuthorityReuse(author)
         );
 
+        // Ignore votes after quorum has already been reached for this view.
+        if self.quorum_reached {
+            return Ok(None);
+        }
+
         // Add the QC to the accumulator.
         self.votes.push((author.clone(), qc.clone()));
         self.weight += committee.stake(&author);
         if self.weight >= committee.quorum_threshold() {
-            self.weight = 0;
+            self.quorum_reached = true;
             
             // Find the QC with the highest round
             let highest_qc = self.votes
                 .iter()
                 .map(|(_, qc)| qc)
-                .max_by_key(|qc| qc.view.round)
+                .max_by_key(|qc| qc.view)
                 .unwrap()
                 .clone();
             

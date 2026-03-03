@@ -5,14 +5,18 @@ use crate::{
 };
 use crypto::{Digest, PublicKey};
 use log::{debug, error, info, warn};
+use tokio::time;
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
+
+/// Timeout for replica RPC calls (in seconds)
+const REPLICA_TIMEOUT_SECS: u64 = 10;
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
     pub async fn send_prepare(&mut self, high_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Sending Prepare message for view {}", self.view);
         
-        if !self.check_is_leader(&self.view) {
+        if !self.check_is_leader(self.view) {
             warn!("Cannot send Prepare message - not the leader for view {}", self.view);
             return Ok(());
         }
@@ -51,7 +55,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     pub async fn handle_prepare(
         &mut self,
         author: PublicKey,
-        view: View<S, D>,
+        view: View,
         node: Node<N, S, D, U, P, V>,
         high_qc: QuorumCert<S, D>,
     ) -> ConsensusResult<()> {
@@ -62,7 +66,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         }
         
         // Verify the sender is the leader for this view
-        let expected_leader = self.leader_elector.get_leader(&view);
+        let expected_leader = self.leader_elector.get_leader(view);
         if author != expected_leader {
             error!("Received Prepare from non-leader: {:?}, expected: {:?}", author, expected_leader);
             return Ok(());
@@ -86,23 +90,52 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             high_qc.verify(&self.committee)?;
         }
 
-        // Check if we should use locked blob (only for same height)
-        if !self.lock_blob.is_empty() && self.lock_qc.view.height == view.height {
-            // If we have a locked blob for the same height, the proposal must match it
+        // If we have a locked blob, check if the proposal matches or has a higher QC
+        if !self.lock_blob.is_empty() {
             if node.blob != self.lock_blob {
-                error!(
-                    "Proposal mismatch for height {}: expected locked blob '{}', got '{}'", 
-                    view.height, self.lock_blob, node.blob
-                );
-                return Ok(());
+                // Allow proposals with a higher QC to override the lock (liveness rule)
+                if high_qc.view <= self.lock_qc.view {
+                    error!(
+                        "Proposal mismatch: expected locked blob, and highQC view {} <= lockQC view {}", 
+                        high_qc.view, self.lock_qc.view
+                    );
+                    return Ok(());
+                }
+                info!("Proposal differs from locked blob, but highQC view {} > lockQC view {}, accepting",
+                    high_qc.view, self.lock_qc.view);
+                // Verify the new proposal with replica since it differs from our lock
+                match time::timeout(
+                    time::Duration::from_secs(REPLICA_TIMEOUT_SECS),
+                    self.replica_client.verify_proposal(node.blob.clone()),
+                ).await {
+                    Ok(Ok(())) => info!("Proposal verification successful"),
+                    Ok(Err(error)) => {
+                        error!("Proposal verification failed: {:?}", error);
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        error!("Proposal verification timed out after {}s", REPLICA_TIMEOUT_SECS);
+                        return Ok(());
+                    }
+                }
+            } else {
+                info!("Proposal matches locked blob, skipping replica verification");
             }
-            info!("Using locked blob for proposal verification at height {}", view.height);
         } else {
-            if let Err(error) = self.replica_client.verify_proposal(node.blob.clone()).await {
-                error!("Proposal verification failed: {:?}", error);
-                return Ok(());
+            match time::timeout(
+                time::Duration::from_secs(REPLICA_TIMEOUT_SECS),
+                self.replica_client.verify_proposal(node.blob.clone()),
+            ).await {
+                Ok(Ok(())) => info!("Proposal verification successful"),
+                Ok(Err(error)) => {
+                    error!("Proposal verification failed: {:?}", error);
+                    return Ok(());
+                }
+                Err(_) => {
+                    error!("Proposal verification timed out after {}s", REPLICA_TIMEOUT_SECS);
+                    return Ok(());
+                }
             }
-            info!("Proposal verification successful");
         }
 
         // Apply safety and liveness rules
@@ -112,7 +145,16 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         self.voted_node = node.clone();
         self.voted_view = view.clone();
         self.persist_voted_state().await;
-        self.send_prepare_vote(node.digest()).await
+        self.send_prepare_vote(node.digest()).await?;
+
+        // Try processing buffered PreCommit message
+        if let Some((author, pv, qc)) = self.pending_precommit.take() {
+            if pv == self.view {
+                info!("Processing buffered PreCommit for view {}", pv);
+                self.handle_pre_commit(author, pv, qc).await?;
+            }
+        }
+        Ok(())
     }
 
     fn extend(&self, node: &Node<N, S, D, U, P, V>, high_qc: &QuorumCert<S, D>) -> ConsensusResult<()> {        
@@ -130,17 +172,17 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return Ok(());
         }
 
-        let high_round = high_qc.view.round;
-        let lock_round = self.lock_qc.view.round;
+        let high_view = high_qc.view;
+        let lock_view = self.lock_qc.view;
         
         // Safety conditions (either must be true):
-        // 1. highQC.round > lockQC.round OR
+        // 1. highQC.view > lockQC.view OR
         // 2. node extends lockQC (node's parent equals lockQC's node)
-        let higher_view = high_round > lock_round;
+        let higher_view = high_view > lock_view;
         let extends_lock = node.parent == self.lock_qc.node_digest;
         
         if higher_view {
-            debug!("Node is safe: higher round ({} > {})", high_round, lock_round);
+            debug!("Node is safe: higher view ({} > {})", high_view, lock_view);
             Ok(())
         } else if extends_lock {
             debug!("Node is safe: extends locked node");
@@ -165,7 +207,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
         match postcard::to_allocvec(&prepare_vote_message) {
             Ok(payload) => {
-                let leader = self.leader_elector.get_leader(&self.view);
+                let leader = self.leader_elector.get_leader(self.view);
                 debug!("Sending PrepareVote {:?} to leader {:?}", node_digest, leader);
                 self.network.send(None, payload)?;
                 debug!("PrepareVote message sent successfully");
@@ -178,7 +220,17 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     }
 
     pub async fn fetch_and_parse_proposal(&self) -> Option<(String, u64)> {
-        match self.replica_client.get_proposal().await {
+        let result = match time::timeout(
+            time::Duration::from_secs(REPLICA_TIMEOUT_SECS),
+            self.replica_client.get_proposal(),
+        ).await {
+            Ok(result) => result,
+            Err(_) => {
+                error!("get_proposal timed out after {}s", REPLICA_TIMEOUT_SECS);
+                return None;
+            }
+        };
+        match result {
             Ok(value) => {
                 let proposal_obj = match value.as_object() {
                     Some(s) => s,

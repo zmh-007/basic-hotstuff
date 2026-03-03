@@ -23,41 +23,7 @@ use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256, mockimpl::MockSignat
 use std::marker::PhantomData;
 use crate::utils::{aggregate_public_keys, digest_to_hex};
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub struct View<S: Scalar, D: ZkpDigest<S>> {
-    pub height: u64,
-    pub round: u64,
-    #[serde(skip)]
-    _phantom: PhantomData<(S, D)>,
-}
-
-impl<S: Scalar, D: ZkpDigest<S>> Default for View<S, D> {
-    fn default() -> Self {
-        Self { height: 1, round: 0, _phantom: PhantomData }
-    }
-}
-
-impl<S: Scalar, D: ZkpDigest<S>> View<S, D> {
-    pub fn digest(&self) -> D {
-        let elements = vec![
-            S::from_u64(self.height),
-            S::from_u64(self.round),
-        ];
-        D::hash_from_scalars_with_padding(&elements)
-    }
-}
-
-impl<S: Scalar, D: ZkpDigest<S>> std::fmt::Display for View<S, D> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "View {{ height: {}, round: {} }}", self.height, self.round)
-    }
-}
-
-impl<S: Scalar, D: ZkpDigest<S>> std::fmt::Debug for View<S, D> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "View {{ height: {}, round: {} }}", self.height, self.round)
-    }
-}
+pub type View = u64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Copy, Hash)]
 pub enum ConsensusMessageType {
@@ -100,13 +66,13 @@ pub enum MessagePayload<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<
     PreCommitVote(Digest<S, D>),
     Commit(QuorumCert<S, D>),
     CommitVote(Digest<S, D>),
-    Decide(QuorumCert<S, D>, String),
+    Decide(QuorumCert<S, D>, Node<N, S, D, U, P, V>, String),
 }
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<Scalar=S> + DeserializeOwned, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> MessagePayload<N, S, D, U, P, V> {
     pub fn digest(&self) -> Digest<S, D> {
         match self {
-            Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _) => {
+            Self::NewView(qc) | Self::PreCommit(qc) | Self::Commit(qc) | Self::Decide(qc, _, _) => {
                 qc.digest()
             }
             Self::Prepare(node, qc) => {
@@ -128,7 +94,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<
 pub struct ConsensusMessage<const N: usize, S: Scalar, D: ZkpDigest<S>, U: SafeU256<Scalar=S>, P: Proof<S>, V: Vk<N, S, P>> {
     pub msg_type: ConsensusMessageType,
     pub author: PublicKey,
-    pub view: View<S, D>,
+    pub view: View,
     pub msg: MessagePayload<N, S, D, U, P, V>,
     pub signature: Signature,
 }
@@ -137,7 +103,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<
     pub fn digest(&self) -> Digest<S, D> {
         let mut elements = Vec::new();
         elements.push(self.msg_type.to_field());
-        elements.extend(self.view.digest().to_scalars());
+        elements.push(S::from_u64(self.view));
         elements.extend(self.msg.digest().to_field().to_scalars());
         Digest {
             value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),
@@ -148,7 +114,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<
     pub async fn new(
         msg_type: ConsensusMessageType,
         author: PublicKey,
-        view: View<S, D>,
+        view: View,
         msg: MessagePayload<N, S, D, U, P, V>,
         mut signature_service: SignatureService<S, D>,
     ) -> Self {
@@ -225,7 +191,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned, U: SafeU256<
 #[serde(bound = "S: Scalar, D: ZkpDigest<S>")]
 pub struct QuorumCert<S: Scalar, D: ZkpDigest<S>> {
     pub qc_type: ConsensusMessageType,
-    pub view: View<S, D>,
+    pub view: View,
     pub node_digest: Digest<S, D>,
     pub agg_sig: Signature,
     pub agg_pk: PublicKey,
@@ -254,7 +220,7 @@ impl<S: Scalar, D: ZkpDigest<S>> QuorumCert<S, D> {
     fn digest(&self) -> Digest<S, D> {
         let mut elements = Vec::new();
         elements.push(self.qc_type.to_field());
-        elements.extend(self.view.digest().to_scalars());
+        elements.push(S::from_u64(self.view));
         elements.extend(self.node_digest.to_field().to_scalars());
         Digest {
             value: digest_to_hex(&D::hash_from_scalars_with_padding(&elements)),

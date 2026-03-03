@@ -44,13 +44,18 @@ pub struct Core<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 
     pub timer: Timer,
     
     // Consensus state
-    pub view: View<S, D>,
+    pub view: View,
     pub voted_node: Node<N, S, D, U, P, V>,
-    pub voted_view: View<S, D>,  // The view in which voted_node was set
+    pub voted_view: View,  // The view in which voted_node was set
     pub prepare_qc: QuorumCert<S, D>,
     pub lock_qc: QuorumCert<S, D>,
     pub lock_blob: String,
     pub consecutive_timeouts: u64,
+
+    // Pending message buffers for out-of-order delivery
+    pub pending_precommit: Option<(PublicKey, View, QuorumCert<S, D>)>,
+    pub pending_commit: Option<(PublicKey, View, QuorumCert<S, D>)>,
+    pub pending_decide: Option<(PublicKey, View, QuorumCert<S, D>, Node<N, S, D, U, P, V>, String)>,
 }
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
@@ -89,6 +94,10 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
                 lock_qc: QuorumCert::default(),
                 lock_blob: String::new(),
                 consecutive_timeouts: 0,
+
+                pending_precommit: None,
+                pending_commit: None,
+                pending_decide: None,
             };
             
             // Restore persistent state from storage
@@ -102,7 +111,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         info!("HotStuff consensus core started for node {}", self.name);
         
         // Start the timer for the first round (resume from persisted round)
-        self.start_new_round(self.view.round).await;
+        self.start_new_view(self.view).await;
 
         // Main consensus loop
         loop {
@@ -148,27 +157,31 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
 
     async fn handle_consensus_message(&mut self, message: ConsensusMessage<N, S, D, U, P, V>) -> ConsensusResult<()> {
         use crate::consensus::ConsensusMessageType as MsgType;
-        
+
         // Fast-forward on authenticated Prepare from valid leader, but only if
-        // the included QC proves the round is legitimate (round <= qc.round + 1).
-        if message.msg_type == MsgType::Prepare && message.view.round > self.view.round {
+        // the included QC proves the round is legitimate (view <= qc.view + 1).
+        if message.msg_type == MsgType::Prepare && message.view > self.view {
             if let MessagePayload::Prepare(_, ref high_qc) = message.msg {
-                let expected_leader = self.leader_elector.get_leader(&message.view);
-                let qc_round = high_qc.view.round;
-                // Verify: sender is leader, round bounded by QC, and QC signature is valid
+                let expected_leader = self.leader_elector.get_leader(message.view);
+                let qc_view = high_qc.view;
                 if message.author == expected_leader
-                    && message.view.round <= qc_round + 1
+                    && message.view <= qc_view + 1
+                    && high_qc.qc_type == crate::consensus::ConsensusMessageType::Prepare
                     && (*high_qc == QuorumCert::default() || high_qc.verify(&self.committee).is_ok())
                 {
                     info!(
-                        "Received Prepare from leader for round {} (current: {}, qc round: {}), fast-forwarding",
-                        message.view.round, self.view.round, qc_round
+                        "Fast-forwarding from view {} to {} (qc view: {})",
+                        self.view, message.view, qc_view
                     );
+                    self.view = message.view;
                     self.consecutive_timeouts = 0;
-                    self.view.round = message.view.round;
-                    self.view.height = message.view.height;
-                    self.persist_round().await;
-                    self.timer.reset();
+                    self.persist_view().await;
+                    self.aggregator.cleanup();
+                    self.pending_precommit = None;
+                    self.pending_commit = None;
+                    self.pending_decide = None;
+                    // Reset timer to base timeout (not the exponential backoff value)
+                    self.timer = Timer::new(self.parameters.timeout_delay);
                 }
             }
         }
@@ -186,8 +199,8 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             (MsgType::Commit, MessagePayload::Commit(qc)) => {
                 self.handle_commit(message.author, message.view, qc).await
             }
-            (MsgType::Decide, MessagePayload::Decide(qc, wp_blk)) => {
-                self.handle_decide(message.author, message.view, qc, wp_blk).await
+            (MsgType::Decide, MessagePayload::Decide(qc, node, wp_blk)) => {
+                self.handle_decide(message.author, message.view, qc, node, wp_blk).await
             }
             _ => {
                 error!(
@@ -200,22 +213,15 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     }
 
     #[async_recursion]
-    pub async fn start_new_round(&mut self, round: u64) {
-        self.view.round = round;
-        
-        // Get proposal from replica to determine height
-        let height = match self.fetch_and_parse_proposal().await {
-            Some((_, height)) => height,
-            None => {
-                warn!("Failed to get proposal for round {}, using previous height", round);
-                return;
-            }
-        };
-
-        self.persist_round().await;
-        // Ensure height never goes backwards (replica may not have processed the last committed block yet)
-        self.view.height = height.max(self.view.height);
+    pub async fn start_new_view(&mut self, view: View) {
+        self.view = view;
+        self.persist_view().await;
         self.aggregator.cleanup();
+
+        // Clear pending message buffers from previous view
+        self.pending_precommit = None;
+        self.pending_commit = None;
+        self.pending_decide = None;
 
         // Reset voted_node if view has changed from the view where we voted
         if self.view != self.voted_view {
@@ -246,7 +252,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         self.timer = Timer::new(new_timeout);
         
         // Move to next round
-        self.start_new_round(self.view.round + 1).await;
+        self.start_new_view(self.view + 1).await;
         Ok(())
     }
     
@@ -266,7 +272,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
     async fn restore_persistent_state(&mut self) {
         // Restore voted_view first
         if let Ok(Some(voted_view_bytes)) = self.store.read_voted_view().await {
-            if let Ok(voted_view) = postcard::from_bytes::<View<S, D>>(&voted_view_bytes) {
+            if let Ok(voted_view) = postcard::from_bytes::<View>(&voted_view_bytes) {
                 self.voted_view = voted_view;
                 info!("Restored voted_view: {}", self.voted_view);
                 
@@ -302,12 +308,12 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             info!("Restored lock_blob: {} chars", self.lock_blob.len());
         }
 
-        // Restore round
-        if let Ok(Some(round_bytes)) = self.store.read_round().await {
-            if round_bytes.len() == 8 {
-                let round = u64::from_le_bytes(round_bytes.try_into().unwrap());
-                self.view.round = round;
-                info!("Restored round: {}", round);
+        // Restore view
+        if let Ok(Some(view_bytes)) = self.store.read_view().await {
+            if view_bytes.len() == 8 {
+                let view = View::from_le_bytes(view_bytes.try_into().unwrap());
+                self.view = view;
+                info!("Restored view: {}", view);
             }
         }
     }
@@ -337,7 +343,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         self.store.write_lock_blob(self.lock_blob.clone()).await;
     }
 
-    pub async fn persist_round(&mut self) {
-        self.store.write_round(self.view.round.to_le_bytes().to_vec()).await;
+    pub async fn persist_view(&mut self) {
+        self.store.write_view(self.view.to_le_bytes().to_vec()).await;
     }
 }

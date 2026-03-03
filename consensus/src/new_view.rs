@@ -27,7 +27,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         match postcard::to_allocvec(&new_view_message) {
             Ok(payload) => {
                 // send the message
-                let leader = self.leader_elector.get_leader(&self.view);
+                let leader = self.leader_elector.get_leader(self.view);
                 if leader == self.name {
                     self.handle_new_view(self.name, self.view.clone(), prepare_qc.clone()).await?;
                 } else {
@@ -43,13 +43,13 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
         Ok(())
     }
 
-    pub async fn handle_new_view(&mut self, author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
+    pub async fn handle_new_view(&mut self, author: PublicKey, view: View, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received NewView for view {:?} from {:?}", view, author);
         if view != self.view {
             error!("Received NewView for view {:?}, but current view is {:?}", view, self.view);
             return Ok(());
         }
-        if !self.check_is_leader(&view) {
+        if !self.check_is_leader(view) {
             error!("Received NewView for view {:?}, but {:?} not the leader", view, self.name);
             return Ok(());
         }
@@ -58,7 +58,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             return Ok(());
         }
         if prepare_qc != QuorumCert::default() {
-            if prepare_qc.view.round >= view.round {
+            if prepare_qc.view >= view {
                 error!("Received NewView with prepare_qc.view {:?} >= current view {:?}", 
                        prepare_qc.view, view);
                 return Ok(());

@@ -1,11 +1,12 @@
 use crypto::{Digest, PublicKey};
 use log::{debug, info, error};
 use crate::{ConsensusError, ConsensusMessage, QuorumCert, consensus::{ConsensusMessageType, MessagePayload, View}, core::Core, error::ConsensusResult};
+use crate::utils::NodeCheck;
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, SafeU256};
 use serde::de::DeserializeOwned;
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
-    pub async fn handle_pre_commit(&mut self, _author: PublicKey, view: View<S, D>, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
+    pub async fn handle_pre_commit(&mut self, _author: PublicKey, view: View, prepare_qc: QuorumCert<S, D>) -> ConsensusResult<()> {
         info!("Received PreCommit for view {:?}", view);
         if view != self.view {
             error!("Received PreCommit for view {:?}, but current view is {:?}", view, self.view);
@@ -19,15 +20,31 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
             error!("PreCommit QC view mismatch: expected {:?}, got {:?}", view, prepare_qc.view);
             return Ok(());
         }
-        if !self.check_node(&prepare_qc.node_digest) {
-            error!("Received precommit for view {:?}, but node digest {:?} doesn't match voted node digest {:?}", 
-                  view, prepare_qc.node_digest, self.voted_node.digest());
-            return Ok(());
+        match self.check_node(&prepare_qc.node_digest) {
+            NodeCheck::Match => {},
+            NodeCheck::NotVotedYet => {
+                info!("PreCommit for view {:?} arrived before Prepare completed, buffering", view);
+                self.pending_precommit = Some((_author, view, prepare_qc));
+                return Ok(());
+            },
+            NodeCheck::DigestMismatch => {
+                error!("PreCommit for view {:?}: node digest {:?} doesn't match voted node {:?}",
+                      view, prepare_qc.node_digest, self.voted_node.digest());
+                return Ok(());
+            },
         }
         prepare_qc.verify(&self.committee)?;
         self.prepare_qc = prepare_qc.clone();
         self.persist_prepare_qc().await;
         self.send_pre_commit_vote(prepare_qc.node_digest.clone()).await?;
+
+        // Try processing buffered Commit message
+        if let Some((author, cv, qc)) = self.pending_commit.take() {
+            if cv == self.view {
+                info!("Processing buffered Commit for view {}", cv);
+                self.handle_commit(author, cv, qc).await?;
+            }
+        }
 
         Ok(())
     }
@@ -45,7 +62,7 @@ impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U:
          match postcard::to_allocvec(&pre_commit_vote_message) {
                 Ok(payload) => {
                     // send the message to leader
-                    let leader = self.leader_elector.get_leader(&self.view);
+                    let leader = self.leader_elector.get_leader(self.view);
                     debug!("send precommit vote {:?} to leader: {:?}", node_digest, leader);
                     self.network.send(None, payload)?;
                     debug!("PreCommitVote message sent successfully");

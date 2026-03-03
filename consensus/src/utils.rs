@@ -5,20 +5,34 @@ use crate::{ConsensusError, consensus::{Node, View}, core::Core, error::Consensu
 use zkp::{Scalar, Digest as ZkpDigest, Proof, Vk, AsScalars, SafeU256};
 use hex::ToHex;
 
+pub enum NodeCheck {
+    /// Node matches voted node for this view
+    Match,
+    /// Haven't voted yet in this view
+    NotVotedYet,
+    /// Voted but digest doesn't match
+    DigestMismatch,
+}
+
 pub fn digest_to_hex<S: Scalar, D: ZkpDigest<S> + AsScalars>(digest: &D) -> String {
     digest.to_scalars().into_iter().flat_map(|v| v.to_bytes()).collect::<Vec<u8>>().encode_hex()
 }
 
 impl<const N: usize, S: Scalar, D: ZkpDigest<S> + DeserializeOwned + 'static, U: SafeU256<Scalar=S> + DeserializeOwned + 'static, P: Proof<S> + DeserializeOwned, V: Vk<N, S, P> + DeserializeOwned> Core<N, S, D, U, P, V> {
-    pub fn check_is_leader(&self, view: &View<S, D>) -> bool {
+    pub fn check_is_leader(&self, view: View) -> bool {
         let leader = self.leader_elector.get_leader(view);
         leader == self.name
     }
 
-    pub fn check_node(&self, node_digest: &Digest<S, D>) -> bool {
-        self.voted_node != Node::<N, S, D, U, P, V>::default() 
-            && self.voted_view == self.view
-            && self.voted_node.digest() == *node_digest
+    pub fn check_node(&self, node_digest: &Digest<S, D>) -> NodeCheck {
+        if self.voted_node == Node::<N, S, D, U, P, V>::default() || self.voted_view != self.view {
+            return NodeCheck::NotVotedYet;
+        }
+        if self.voted_node.digest() == *node_digest {
+            NodeCheck::Match
+        } else {
+            NodeCheck::DigestMismatch
+        }
     }
 }
 

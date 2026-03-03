@@ -1,7 +1,5 @@
 use crypto::PublicKey;
 use crate::{config::Committee, consensus::View};
-use zkp::{Scalar, Digest as ZkpDigest};
-
 pub type LeaderElector = RRLeaderElector;
 
 pub struct RRLeaderElector {
@@ -13,9 +11,9 @@ impl RRLeaderElector {
         Self { committee }
     }
 
-    pub fn get_leader<S: Scalar, D: ZkpDigest<S>>(&self, view: &View<S, D>) -> PublicKey {
+    pub fn get_leader(&self, view: View) -> PublicKey {
         let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
         keys.sort();
-        keys[view.round as usize % self.committee.size()]
+        keys[view as usize % self.committee.size()]
     }
 }
